@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Flask management interface."""
 
 from __future__ import annotations
@@ -130,6 +127,71 @@ def create_app(settings: Settings | None = None) -> Flask:
                                default_network=values.get("default_network_key", ""),
                                advanced_networks=values.get("advanced_node_networks") == "true",
                                changes=changes)
+
+    @app.route("/nodes/setup", methods=["GET", "POST"])
+    @write_required
+    def node_setup():
+        values = {
+            "node_number": request.form.get("node_number", ""),
+            "name": request.form.get("name", ""),
+            "callsign": request.form.get("callsign", "").strip().upper(),
+            "profile": request.form.get("profile", "simplex_hotspot"),
+            "interface": request.form.get("interface", "SimpleUSB"),
+        }
+        errors = {}
+        if request.method == "POST":
+            try:
+                node_number = int(values["node_number"])
+                if node_number < 1:
+                    raise ValueError
+            except ValueError:
+                errors["node_number"] = "Enter a positive whole number."
+                node_number = None
+            name = values["name"].strip()
+            if not name or len(name) > 200 or any(char in name for char in "\r\n"):
+                errors["name"] = "Enter a name of at most 200 characters on one line."
+            if not re.fullmatch(r"[A-Z0-9/-]{1,16}", values["callsign"]):
+                errors["callsign"] = "Enter a call sign using up to 16 letters, numbers, / or -."
+            profiles = {
+                "simplex_no_telemetry": 0,
+                "simplex_hotspot": 1,
+                "full_duplex_repeater": 2,
+                "hub_no_radio": 0,
+            }
+            if values["profile"] not in profiles:
+                errors["profile"] = "Choose one of the listed node setups."
+            if values["profile"] != "hub_no_radio" and values["interface"] not in {
+                    "SimpleUSB", "Radio", "Voter"}:
+                errors["interface"] = "Choose one of the listed radio interfaces."
+            if not errors:
+                with sessions() as db:
+                    if db.scalar(select(Node.id).where(Node.node_number == node_number)) is not None:
+                        errors["node_number"] = "That Node ID is already configured."
+            if not errors:
+                duplex = profiles[values["profile"]]
+                channel = ("Local/pseudo" if values["profile"] == "hub_no_radio"
+                           else f"{values['interface']}/{node_number}")
+                with sessions.begin() as db:
+                    node = Node(node_number=node_number, name=name)
+                    apply_node_config_values(node, {
+                        "rxchannel": channel,
+                        "duplex": str(duplex),
+                        "idrecording": f"|i{values['callsign']}",
+                    })
+                    db.add(node)
+                    if values["interface"] == "SimpleUSB" and values["profile"] != "hub_no_radio":
+                        db.add(SimpleUSBSettings(node=node))
+                    _record_change(db, current_user() or "", f"Set up node {node_number}", {
+                        "record": "node_setup",
+                        "node_number": node_number,
+                        "profile": values["profile"],
+                        "interface": values["interface"] if values["profile"] != "hub_no_radio" else None,
+                    })
+                engine.dispose()
+                _regenerate_or_503(settings)
+                return redirect(url_for("index"))
+        return render_template("node-setup.html", values=values, errors=errors,
+                               initial_step=1 if set(errors) & {"profile", "interface"} else 0)
 
     @app.post("/nodes")
     @write_required

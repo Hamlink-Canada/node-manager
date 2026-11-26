@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 from io import BytesIO
 import json
 
@@ -56,8 +53,88 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     with client.session_transaction() as browser_session:
         browser_session["username"] = "reader"
     assert client.get("/").status_code == 200
+    assert client.get("/nodes/setup").status_code == 403
     assert client.post("/nodes", data={"node_number": "1200", "name": "Unauthorized"}).status_code == 403
     assert client.get("/backup").status_code == 403
+
+
+def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path):
+    settings = Settings(database=tmp_path / "wizard.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    page = client.get("/nodes/setup")
+    assert page.status_code == 200
+    assert b"Nothing is saved until you finish the review" in page.data
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            assert session.query(Node).filter_by(node_number=2345).count() == 0
+
+        created = client.post("/nodes/setup", data={
+            "node_number": "2345",
+            "name": "Workshop Repeater",
+            "callsign": "VE3ABC",
+            "profile": "full_duplex_repeater",
+            "interface": "SimpleUSB",
+        })
+        assert created.status_code == 302
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=2345).one()
+            assert node.name == "Workshop Repeater"
+            assert node.rxchannel == "SimpleUSB/2345"
+            assert node.duplex == 2
+            assert node.idrecording == "|iVE3ABC"
+            assert node.simpleusb_settings is not None
+
+        generated = (settings.demo_output_directory / "rpt.conf").read_text()
+        assert "[2345]" in generated
+        assert "idrecording = |iVE3ABC" in generated
+        assert "rxchannel = SimpleUSB/2345" in generated
+
+        hub = client.post("/nodes/setup", data={
+            "node_number": "2346",
+            "name": "Remote Hub",
+            "callsign": "VE3XYZ",
+            "profile": "hub_no_radio",
+            "interface": "SimpleUSB",
+        })
+        assert hub.status_code == 302
+        with sessions() as session:
+            hub_node = session.query(Node).filter_by(node_number=2346).one()
+            assert hub_node.rxchannel == "Local/pseudo"
+            assert hub_node.duplex == 0
+            assert hub_node.simpleusb_settings is None
+    finally:
+        sessions.kw["bind"].dispose()
+
+
+def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_path):
+    settings = Settings(database=tmp_path / "wizard-duplicate.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    response = client.post("/nodes/setup", data={
+        "node_number": "1000",
+        "name": "Duplicate",
+        "callsign": "VE3ABC",
+        "profile": "simplex_hotspot",
+        "interface": "SimpleUSB",
+    })
+    assert response.status_code == 200
+    assert b"That Node ID is already configured." in response.data
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            assert session.query(Node).filter_by(node_number=1000).count() == 1
+    finally:
+        sessions.kw["bind"].dispose()
 
 
 def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
