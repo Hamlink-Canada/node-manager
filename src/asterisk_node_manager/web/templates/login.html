@@ -1,8 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body><main class="card"><h1>Asterisk Node Manager</h1><h2>Sign in</h2>
+<body>{% if demo_mode %}<aside class="demo-banner">Demonstration mode: changes stay in the demo database and generated files.</aside>{% endif %}<main class="card"><h1>Asterisk Node Manager</h1><h2>{% if demo_mode %}Demo sign in{% else %}Sign in{% endif %}</h2>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if demo_mode %}<form method="post"><label>Username <input name="username" value="{{ demo_username }}" readonly></label>
+<button type="submit">Continue as demo user</button></form>
+{% else %}
 <form method="post"><label>Username <input name="username" autocomplete="username" required></label>
 <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-<button type="submit">Sign in</button></form></main></body></html>
+<button type="submit">Sign in</button></form>{% endif %}</main></body></html>

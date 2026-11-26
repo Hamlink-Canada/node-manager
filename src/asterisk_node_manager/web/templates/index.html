@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body><header><h1>Asterisk Node Manager</h1><form action="{{ url_for('logout') }}" method="post"><span>{{ username }}</span> <button>Sign out</button></form></header>
+<body>{% if demo_mode %}<aside class="demo-banner">Demonstration mode: changes stay in the demo database and generated files.</aside>{% endif %}<header><h1>Asterisk Node Manager</h1><form action="{{ url_for('logout') }}" method="post">{% if demo_mode %}<label class="demo-login">Demo user <input value="{{ demo_username }}" readonly></label>{% else %}<span>{{ username }}</span>{% endif %} <button>Sign out</button></form></header>
 <main><section class="card"><h2>Configuration</h2><p>{{ node_count }} node(s)</p>
 <p><a href="{{ url_for('files') }}">Edit generated configuration files</a></p>
 <p><a href="{{ url_for('diagnostics') }}">Read-only Asterisk diagnostics</a></p>

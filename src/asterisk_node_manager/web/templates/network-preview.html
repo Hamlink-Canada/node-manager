@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Preview network profile · Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body><header><h1>Preview network profile</h1><a href="{{ url_for('index') }}">Cancel</a></header><main>
+<body>{% if demo_mode %}<aside class="demo-banner">Demonstration mode: changes stay in the demo database and generated files.</aside>{% endif %}<header><h1>Preview network profile</h1><a href="{{ url_for('index') }}">Cancel</a></header><main>
 <section class="card"><p><strong>{{ name }}</strong> ({{ stable_key }})</p>
 <p>{% if exists %}This updates the matching profile in place. Its default and node assignments remain unchanged.{% else %}This adds a new profile.{% endif %}</p>
 <pre>{{ config_json }}</pre>

@@ -1,0 +1,21 @@
+services:
+  demo:
+    build: .
+    image: asterisk-node-manager:local
+    command: ["astnode-web"]
+    environment:
+      ASTNODE_DEMO: "1"
+      ASTNODE_DATABASE: /var/lib/asterisk-node-manager/manager.sqlite3
+      ASTNODE_ASTERISK_DIRECTORY: /demo-output
+      ASTNODE_DEMO_OUTPUT_DIRECTORY: /demo-output
+      ASTNODE_WRITER_SOCKET: /run/asterisk-node-manager/no-helper.sock
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - demo-data:/var/lib/asterisk-node-manager
+      - demo-output:/demo-output
+    restart: unless-stopped
+
+volumes:
+  demo-data:
+  demo-output:

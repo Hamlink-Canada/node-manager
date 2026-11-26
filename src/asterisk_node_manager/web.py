@@ -22,13 +22,17 @@ from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, Setting
 from .migrate import upgrade_database
+from .demo import DEMO_USERNAME, initialize_demo
 from . import __version__
 
 
 def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
+    if settings.demo_mode:
+        initialize_demo(settings.database)
+        _request_generation(settings)
     app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
-    app.secret_key = _read_secret(settings.secret_key_file)
+    app.secret_key = _read_secret(settings.secret_key_file, demo_mode=settings.demo_mode)
     app.config["MAX_CONTENT_LENGTH"] = 104_857_600
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     sessions = session_factory(settings.database)
@@ -38,6 +42,8 @@ def create_app(settings: Settings | None = None) -> Flask:
         return session.get("username")
 
     def writers() -> set[str]:
+        if settings.demo_mode:
+            return {DEMO_USERNAME}
         try:
             return {line.strip() for line in settings.writer_allowlist.read_text().splitlines()
                     if line.strip() and not line.lstrip().startswith("#")}
@@ -63,12 +69,20 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     app.jinja_env.globals["is_writer"] = lambda: current_user() in writers()
 
+    @app.context_processor
+    def add_demo_context():
+        return {"demo_mode": settings.demo_mode, "demo_username": DEMO_USERNAME}
+
     @app.get("/login")
     def login():
         return render_template("login.html", error=None)
 
     @app.post("/login")
     def login_post():
+        if settings.demo_mode:
+            session.clear()
+            session["username"] = DEMO_USERNAME
+            return redirect(request.args.get("next") or url_for("index"))
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         if not username or not password or not _request_authentication(settings, username, password):
@@ -154,22 +168,92 @@ def create_app(settings: Settings | None = None) -> Flask:
                 node.network = None
             _record_change(db, current_user() or "", f"Changed network for node {node.node_number}",
                            {"record": "node", "node_number": node.node_number,
-        -üç‹h‘éì¶»§q«^uHŸJK™[˜ÛÙJ]‹NŠBˆÚ]ÛØÚÙ]œÛØÚÙ]
-ÛØÚÙ]Q—ÕS’VÛØÚÙ]”ÓĞÒ×ÔÕ‘PSJH\ÈÛY[‚ˆÛY[œÙ][Y[İ]
-Ì
-BˆÛY[˜ÛÛ›™Xİ
-İŠÙ][™ÜËÜš]\—ÜÛØÚÙ]
-JBˆÛY[œÙ[™[
-™\]Y\İÙ]JBˆ™\ÜÛœÙHHœÛÛ‹›ØYÊÛY[œ™XİŠMLÍŠK™XÛÙJ]‹NŠJBˆYˆ›İ™\ÜÛœÙK™Ù]
-›ÚÈŠN‚ˆ˜Z\ÙHÔÑ\œ›ÜŠ™\ÜÛœÙK™Ù]
-™\œ›Üˆ‹˜ÛÛ™šYİ\˜][ÛˆÙ[™\˜][Ûˆ˜Z[YŠJB‚‚™YˆÜ™\]Y\İØ]][XØ][ÛŠÙ][™ÜÎˆÙ][™ÜË\Ù\›˜[YNˆİ‹\ÜİÛÜ™ˆİŠHOˆ›ÛÛ‚ˆ™\]Y\İÙ]HHœÛÛ‹™[\ÊÈ›Ü\˜][Ûˆˆ˜]][XØ]H‹\Ù\›˜[YHˆ\Ù\›˜[YKˆœ\ÜİÛÜ™ˆ\ÜİÛÜ™œÙ\šXÙHˆÙ][™ÜËœ[WÜÙ\šXÙ_JK™[˜ÛÙJ]‹NŠBˆÚ]ÛØÚÙ]œÛØÚÙ]
-ÛØÚÙ]Q—ÕS’VÛØÚÙ]”ÓĞÒ×ÔÕ‘PSJH\ÈÛY[‚ˆÛY[œÙ][Y[İ]
-MJBˆÛY[˜ÛÛ›™Xİ
-İŠÙ][™ÜËÜš]\—ÜÛØÚÙ]
-JBˆÛY[œÙ[™[
-™\]Y\İÙ]JBˆ™\ÜÛœÙHHœÛÛ‹›ØYÊÛY[œ™XİŠMLÍŠK™XÛÙJ]‹NŠJBˆ™]\›ˆ›ÛÛ
+                            "network_key": node.network.stable_key if node.network else None})
+        engine.dispose()
+        _regenerate_or_503(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/settings/network-selection")
+    @write_required
+    def network_selection():
+        enabled = "enabled" if request.form.get("enabled") == "true" else "false"
+        with sessions.begin() as db:
+            row = db.get(Setting, "advanced_node_networks")
+            if row is None:
+                db.add(Setting(key="advanced_node_networks", value=enabled))
+            else:
+                row.value = enabled
+            _record_change(db, current_user() or "", "Changed per-node network selection setting",
+                           {"record": "setting", "key": "advanced_node_networks", "value": enabled})
+        engine.dispose()
+        _regenerate_or_503(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/settings/default-network")
+    @write_required
+    def default_network():
+        with sessions.begin() as db:
+            network = db.get(Network, request.form.get("network_id", type=int))
+            if network is None:
+                abort(400, "Choose an existing network profile")
+            row = db.get(Setting, "default_network_key")
+            if row is None:
+                db.add(Setting(key="default_network_key", value=network.stable_key))
+            else:
+                row.value = network.stable_key
+            _record_change(db, current_user() or "", f"Selected {network.name} as the default network",
+                           {"record": "setting", "key": "default_network_key",
+                            "network_key": network.stable_key})
+        engine.dispose()
+        _regenerate_or_503(settings)
+        return redirect(url_for("index"))
+
+    @app.post("/networks/import")
+    @write_required
+    def import_network():
+        if request.form.get("action") == "commit":
+            try:
+                profile = {"schema_version": int(request.form.get("schema_version", "1")),
+                           "key": request.form.get("key"), "name": request.form.get("name"),
+                           "config": json.loads(request.form.get("config", "{}"))}
+            except (ValueError, json.JSONDecodeError):
+                abort(400, "Invalid network profile preview")
+        else:
+            uploaded = request.files.get("network")
+            if uploaded is None:
+                abort(400, "Choose a network JSON file")
+            try:
+                profile = json.loads(uploaded.read().decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                abort(400, "Network file must contain valid UTF-8 JSON")
+        if (not isinstance(profile, dict)
+                or set(profile) != {"schema_version", "key", "name", "config"}
+                or type(profile.get("schema_version")) is not int
+                or profile.get("schema_version") != 1):
+            abort(400, "Unsupported network profile schema")
+        stable_key, name, config = profile.get("key"), profile.get("name"), profile.get("config")
+        if (not isinstance(stable_key, str) or not re.fullmatch(r"[a-zA-Z0-9._-]{1,120}", stable_key)
+                or not isinstance(name, str) or not name.strip() or len(name) > 200
+                or not isinstance(config, dict)):
+            abort(400, "Network profile needs a key, name, and object config")
+        with sessions() as db:
+            exists = db.scalar(select(Network.id).where(Network.stable_key == stable_key)) is not None
+        if request.form.get("action") != "commit":
+            return render_template("network-preview.html", name=name.strip(), stable_key=stable_key,
+                                   config_json=json.dumps(config, indent=2), exists=exists,
+                                   source="upload")
+        with sessions.begin() as db:
+            network = db.scalar(select(Network).where(Network.stable_key == stable_key))
+            if network is None:
+                network = Network(stable_key=stable_key, name=name.strip(), schema_version=1, config=config)
+                db.add(network)
+            else:
+                network.name, network.schema_version, network.config = name.strip(), 1, config
+            _record_change(db, current_user() or "", f"Imported network profile {name.strip()}",
+                           {"record": "network", "stable_key": stable_key, "operation": "up}»Ûkh‘éì¶»§q«^uÊÛY[œ™XİŠMLÍŠK™XÛÙJ]‹NŠJBˆ™]\›ˆ›ÛÛ
 ™\ÜÛœÙK™Ù]
-˜]][XØ]YŠJB‚‚™YˆÜ™\]Y\İÙXYÛ›ÜİXÊÙ][™ÜÎˆÙ][™ÜËÛÛ[X[™ˆİŠHOˆİ‚ˆ™\]Y\İÙ]HHœÛÛ‹™[\ÊÈ›Ü\˜][Ûˆˆ™XYÛ›ÜİXÈ‹˜ÛÛ[X[™ˆÛÛ[X[™JK™[˜ÛÙJ]‹NŠBˆÚ]ÛØÚÙ]œÛØÚÙ]
+˜]][XØ]YŠJB‚‚™YˆÜ™\]Y\İÙXYÛ›ÜİXÊÙ][™ÜÎˆÙ][™ÜËÛÛ[X[™ˆİŠHOˆİ‚ˆYˆÙ][™ÜË™[[×Û[ÙN‚ˆ™]\›ˆÙ[[×ÙXYÛ›ÜİXÊÛÛ[X[™
+Bˆ™\]Y\İÙ]HHœÛÛ‹™[\ÊÈ›Ü\˜][Ûˆˆ™XYÛ›ÜİXÈ‹˜ÛÛ[X[™ˆÛÛ[X[™JK™[˜ÛÙJ]‹NŠBˆÚ]ÛØÚÙ]œÛØÚÙ]
 ÛØÚÙ]Q—ÕS’VÛØÚÙ]”ÓĞÒ×ÔÕ‘PSJH\ÈÛY[‚ˆÛY[œÙ][Y[İ]
 MJBˆÛY[˜ÛÛ›™Xİ
 İŠÙ][™ÜËÜš]\—ÜÛØÚÙ]
@@ -177,7 +261,14 @@ JBˆÛY[œÙ[™[
 ™\]Y\İÙ]JBˆ™\ÜÛœÙHHœÛÛ‹›ØYÊÛY[œ™XİŠMLÍŠK™XÛÙJ]‹NŠJBˆYˆ›İ™\ÜÛœÙK™Ù]
 ›ÚÈŠN‚ˆ˜Z\ÙHÔÑ\œ›ÜŠ™\ÜÛœÙK™Ù]
 ™\œ›Üˆ‹\İ\š\ÚÈXYÛ›ÜİXÈ˜Z[YŠJBˆ™]\›ˆİŠ™\ÜÛœÙK™Ù]
-›İ]]‹ˆŠJB‚‚™YˆÜ™XÛÜ™ØÚ[™ÙJ‹XİÜˆİ‹İ[[X\Nˆİ‹]Z[ÎˆXİ›Û™HH›Û™JHOˆ›Û™N‚ˆ]\İH‹œØØ[\ŠÙ[Xİ
+›İ]]‹ˆŠJB‚‚™YˆÙ[[×ÙXYÛ›ÜİXÊÛÛ[X[™ˆİŠHOˆİ‚ˆ^[\\ÈHÂˆ˜ÛÜ™HÚİÈ™\œÚ[Ûˆˆ\İ\š\ÚÈŒËŒY[[ÈZ[›Üˆ[[Ûœİ˜][Û—ˆ‹ˆ˜ÛÜ™HÚİÈ\[YHˆ”Ş\İ[H\[YNˆˆİ\œËMZ[]\×“\İ™[ØYˆNZ[]\ÈYÛ×ˆ‹ˆ˜ÛÜ™HÚİÈÚ[›™[ÈˆÚ[›™[ØØ][Ûˆİ]H\XØ][Û—ŒXİ]™HÚ[›™[×ˆ‹ˆšX^ˆÚİÈY\œÈˆ“˜[YKÕ\Ù\›˜[YHÜİİ]W‘[[ÔY\ˆNL‹ŒŒ‹ŒHÒ×ˆ‹ˆœœÚİÈ›Ù\Èˆ“›ÙHLˆ[[È›ÙH›Ü“›ÙHLNˆ[[È›ÙHÛİ]ˆ‹ˆ›[Ù[HÚİÈˆ“[Ù[H\ØÜš\[Û—˜\ÜœœÛÈ˜Y[È™\X]\—ˆ‹ˆBˆ™]\›ˆ^[\\Ë™Ù]
+ÛÛ[X[™“›È[[Ûœİ˜][Ûˆİ]]›Üˆ\ÈÛÛ[X[™—ˆŠB‚‚™YˆİÜš]WÙ[[×Ùš[\Ê\™XİÜNˆ]š[\ÎˆXİÜİ‹]\×JHOˆ›Û™N‚ˆ\™XİÜK›ZÙ\Š\™[ÏUYK^\İÛÚÏUYJBˆ›Üˆ˜[YKÛÛ[[ˆš[\Ëš][\Ê
+N‚ˆYˆ]
+˜[YJK›˜[YHOH˜[YN‚ˆ˜Z\ÙH˜[YQ\œ›ÜŠ[œØY™HÙ[™\˜]Yš[[˜[YHŠBˆÚ][\š[K“˜[YY[\Ü˜\Qš[J\Y\™XİÜK™Yš^Yˆ‹Û˜[Y_Kˆ‹[]OQ˜[ÙJH\Èİ™X[N‚ˆ[\Ü˜\HH]
+İ™X[K›˜[YJBˆİ™X[KÜš]JÛÛ[
+Bˆ[\Ü˜\K˜Ú[Ù
+Í
+BˆÜËœ™\XÙJ[\Ü˜\K\™XİÜHÈ˜[YJB‚‚™YˆÜ™XÛÜ™ØÚ[™ÙJ‹XİÜˆİ‹İ[[X\Nˆİ‹]Z[ÎˆXİ›Û™HH›Û™JHOˆ›Û™N‚ˆ]\İH‹œØØ[\ŠÙ[Xİ
 [˜Ë›X^
 Ú[™ÙKœ™]š\Ú[ÛŠJJHÜˆˆ‹˜Y
 Ú[™ÙJXİÜXXİÜ‹İ[[X\O\İ[[X\K™]š\Ú[Û[]\İ
@@ -226,12 +317,11 @@ H
 —ˆˆYˆ^™[™İÚ]
 —ˆŠH[ÙHˆŠB‚‚™YˆÜ™YÙ[™\˜]WÛÜ—ÍLÊÙ][™ÜÎˆÙ][™ÜÊHOˆ›Û™N‚ˆN‚ˆÜ™\]Y\İÙÙ[™\˜][ÛŠÙ][™ÜÊBˆ^Ù\ÔÑ\œ›Üˆ\È^Î‚ˆX›Ü
 LËˆ‘]X˜\ÙHÚ[™ÙHØ\ÈØ]™Y]š[HÙ[™\˜][Ûˆ˜Z[YˆÙ^ßHŠB‚‚™YˆÜ™XYÜÙXÜ™]
-]ˆ]
-HOˆİ‚ˆN‚ˆ˜[YHH]œ™XYİ^
+]ˆ][[×Û[ÙNˆ›ÛÛH˜[ÙJHOˆİ‚ˆN‚ˆ˜[YHH]œ™XYİ^
 
 Kœİš\
 
-BˆYˆ˜[YN‚ˆ™]\›ˆ˜[YBˆ^Ù\ÔÑ\œ›Ü‚ˆ\ÜÂˆYˆÜË™[š\›Û‹™Ù]
+BˆYˆ˜[YN‚ˆ™]\›ˆ˜[YBˆ^Ù\ÔÑ\œ›Ü‚ˆ\ÜÂˆYˆ[[×Û[ÙN‚ˆ™]\›ˆ™[[Ë[[ÙK[Û›K\Ù\ÜÚ[Û‹ZÙ^KXÚ[™ÙK[YH‚ˆYˆÜË™[š\›Û‹™Ù]
 TÕT’TÒ×Ó“ÑWÓPSQÑT—ÑUˆŠHOHŒH‚ˆ™]\›ˆ™]™[ÜY[[Û›KXÚ[™ÙK[YH‚ˆ˜Z\ÙH[[YQ\œ›ÜŠˆ“Z\ÜÚ[™È›\ÚÈÙXÜ™]Ù^NˆÜ]HŠB‚‚™YˆXZ[Š
 HOˆ[‚ˆÙ][™ÜÈHØYÜÙ][™ÜÊ
 BˆÙ\™JÜ™X]WØ\

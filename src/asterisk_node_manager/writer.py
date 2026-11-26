@@ -7,7 +7,6 @@ import os
 import socket
 import subprocess
 import stat
-import sys
 import tempfile
 import grp
 
@@ -122,17 +121,49 @@ def _replace_files(directory: Path, files: dict[str, bytes]) -> None:
 
 def main() -> int:
     settings = load_settings()
-    if not os.path.exists(settings.writer_socket):
-        print("Writer socket must be provided by systemd socket activation", file=sys.stderr)
-        return 2
-    # systemd passes the listening socket as descriptor 3.
-    server = socket.socket(fileno=3)
-    while True:
-        connection, _ = server.accept()
-        with connection:
-            request = connection.recv(65536)
-            response = handle_request(request, settings)
-            connection.sendall(json.dumps(response).encode("utf-8"))
+    server, owns_socket_path = _open_server_socket(settings)
+    try:
+        while True:
+            connection, _ = server.accept()
+            with connection:
+                request = connection.recv(65536)
+                response = handle_request(request, settings)
+                connection.sendall(json.dumps(response).encode("utf-8"))
+    finally:
+        server.close()
+        if owns_socket_path:
+            settings.writer_socket.unlink(missing_ok=True)
+
+
+def _open_server_socket(settings):
+    activated = (os.environ.get("LISTEN_PID") == str(os.getpid())
+                 and int(os.environ.get("LISTEN_FDS", "0")) >= 1)
+    if activated:
+        return socket.socket(fileno=3), False
+    if os.geteuid() != 0:
+        raise PermissionError("standalone writer helper must run as root")
+
+    socket_path = settings.writer_socket
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    if socket_path.exists():
+        if not socket_path.is_socket():
+            raise RuntimeError(f"Writer socket path exists and is not a socket: {socket_path}")
+        socket_path.unlink()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(str(socket_path))
+        server.listen(32)
+        os.chmod(socket_path, 0o660)
+        try:
+            group_id = grp.getgrnam("asterisk-node-manager").gr_gid
+            os.chown(socket_path, 0, group_id)
+        except KeyError:
+            pass
+    except Exception:
+        server.close()
+        socket_path.unlink(missing_ok=True)
+        raise
+    return server, True
 
 
 if __name__ == "__main__":
