@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 # Asterisk Node Manager
 
 A standalone Python application for managing Asterisk node configuration. The
@@ -14,6 +17,11 @@ GPL-3.0-or-later. See GLOSSARY.md for project terminology.
     . .venv/bin/activate
     python -m pip install -e .
     astnode --help
+
+Install the test extra and run the full test suite with:
+
+    python -m pip install -e '.[test]'
+    python -m pytest
 
 The database and host settings are configured in
 /etc/asterisk-node-manager/config.toml after Debian package installation. A

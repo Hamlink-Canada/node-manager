@@ -57,7 +57,7 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                 for key in simpleusb_fields:
                     value = getattr(typed, key)
                     usb_values.append(SimpleNamespace(section=str(node.node_number), key=key,
-                                                      value=str(value).lower() if isinstance(value, bool)
+                                                      value=("yes" if value else "no") if isinstance(value, bool)
                                                       else str(value), secret=False))
         for filename in GENERATED_FILES:
             values = [value for value in file_values if value.file_name == filename]

@@ -83,7 +83,7 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
         advanced = key_in_advanced(definition)
         group_id = (group_key, advanced)
         if group_id not in by_name:
-            group = {"title": _message(group_key, locale, catalog, english), "fields": [],
+            group = {"title": _message(f"group_{group_key}", locale, catalog, english), "fields": [],
                      "advanced": advanced}
             by_name[group_id] = group
             groups.append(group)

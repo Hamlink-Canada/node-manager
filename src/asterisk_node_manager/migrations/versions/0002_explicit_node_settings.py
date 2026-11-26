@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0002_explicit_node_settings"
-down_revision = "0001_initial_schema"
+revision = "0003_explicit_node_settings"
+down_revision = "0002_change_details"
 branch_labels = None
 depends_on = None
 

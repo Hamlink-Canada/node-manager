@@ -14,6 +14,7 @@ requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Asterisk Node Manager contributors" }]
 dependencies = ["Alembic>=1.8", "Bootstrap-Flask>=2.2,<3", "Flask>=2.2", "Jinja2>=3.0", "python-pam>=2.0", "SQLAlchemy>=1.4.24", "waitress>=2.1"]
+
 classifiers = [
   "Environment :: Console",
   "Environment :: Web Environment",
@@ -25,6 +26,9 @@ classifiers = [
   "Topic :: Communications :: Telephony",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+
 [project.scripts]
 astnode = "asterisk_node_manager.cli:main"
 astnode-web = "asterisk_node_manager.web:main"
@@ -34,4 +38,4 @@ astnode-writer = "asterisk_node_manager.writer:main"
 packages = ["src/asterisk_node_manager"]
 
 [tool.hatch.build]
-include = ["src/asterisk_node_manager/web/templates/**", "src/asterisk_node_manager/web/static/**", "src/asterisk_node_manager/conf/**", "src/asterisk_node_manager/translations/**", "src/asterisk_node_manager/migrations/**", "src/asterisk_node_manager/alembic.ini"]
+include = ["tests/**", "src/asterisk_node_manager/web/templates/**", "src/asterisk_node_manager/web/static/**", "src/asterisk_node_manager/conf/**", "src/asterisk_node_manager/translations/**", "src/asterisk_node_manager/migrations/**", "src/asterisk_node_manager/alembic.ini"]
