@@ -13,7 +13,7 @@ def test_settings_load_toml_and_environment_overrides(monkeypatch, tmp_path):
     monkeypatch.setenv("ASTNODE_PORT", "9876")
 
     settings = load_settings(config)
-    assert settings.database == Path("./db.sqlite3")
+    assert settings.database == ":memory:"
     assert settings.asterisk_directory == Path("./etc-asterisk")
     assert settings.listen_address == "0.0.0.0"
     assert settings.port == 9876

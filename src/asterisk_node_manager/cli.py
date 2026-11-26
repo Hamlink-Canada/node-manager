@@ -41,6 +41,9 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     settings = load_settings(args.config)
+    if settings.demo_mode:
+        print("The in-memory demo database is available only through the web app.", file=sys.stderr)
+        return 2
     if args.command == "init":
         _require_root()
         upgrade_database(settings.database)

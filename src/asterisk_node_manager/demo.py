@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from .database import session_factory
+from .database import is_memory_database, session_factory
 from .migrate import upgrade_database
 from .models import Change, ConfigValue, Node, Setting, SimpleUSBSettings
 
@@ -38,4 +38,5 @@ def initialize_demo(database) -> None:
                        details={"record": "demo", "operation": "initialize"}),
             ])
     finally:
-        sessions.kw["bind"].dispose()
+        if not is_memory_database(database):
+            sessions.kw["bind"].dispose()

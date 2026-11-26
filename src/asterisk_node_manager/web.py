@@ -21,7 +21,8 @@ from sqlalchemy import func, select
 from waitress import serve
 
 from .config import Settings, load_settings
-from .database import session_factory, sqlite_snapshot
+from .database import (database_exists, dispose_database_engine, is_memory_database,
+                       restore_sqlite_snapshot, session_factory, sqlite_snapshot)
 from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings
@@ -43,7 +44,8 @@ from .configuration import (
 def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
     if settings.demo_mode:
-        if settings.database.resolve() == Settings.database.resolve():
+        if (not is_memory_database(settings.database)
+                and Path(settings.database).resolve() == Settings.database.resolve()):
             raise ValueError("Demo mode must use a separate database path")
         initialize_demo(settings.database)
         _request_generation(settings)
@@ -58,12 +60,12 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
-    engine = sessions.kw["bind"]
     write_lock = threading.RLock()
 
     @app.before_request
     def protect_mutations_and_serialize_writes():
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        if is_mutation:
             origin = request.headers.get("Origin")
             referer = request.headers.get("Referer")
             source = origin or referer
@@ -73,10 +75,11 @@ def create_app(settings: Settings | None = None) -> Flask:
                 parsed = urlsplit(source)
                 if parsed.netloc != request.host or parsed.scheme != request.scheme:
                     abort(400, "Cross-origin requests are not allowed")
+        if is_mutation or is_memory_database(settings.database):
             write_lock.acquire()
             request.environ["node_manager_write_lock"] = True
-            if current_user() in writers():
-                existed = settings.database.is_file()
+            if is_mutation and current_user() in writers():
+                existed = is_memory_database(settings.database) or Path(settings.database).is_file()
                 request.environ["node_manager_prewrite_database"] = (
                     _sqlite_snapshot(settings.database) if existed else None, existed)
 
@@ -93,19 +96,21 @@ def create_app(settings: Settings | None = None) -> Flask:
         snapshot, existed = state
         try:
             if response.status_code >= 500:
-                engine.dispose()
+                dispose_database_engine(settings.database)
                 if existed and snapshot is not None:
-                    current = settings.database.stat() if settings.database.exists() else None
-                    if current is not None:
-                        os.chmod(snapshot, current.st_mode & 0o777)
-                        try:
-                            os.chown(snapshot, current.st_uid, current.st_gid)
-                        except PermissionError:
-                            pass
-                    os.replace(snapshot, settings.database)
+                    if not is_memory_database(settings.database):
+                        current = Path(settings.database).stat() if Path(settings.database).exists() else None
+                        if current is not None:
+                            os.chmod(snapshot, current.st_mode & 0o777)
+                            try:
+                                os.chown(snapshot, current.st_uid, current.st_gid)
+                            except PermissionError:
+                                pass
+                    restore_sqlite_snapshot(settings.database, snapshot)
                 else:
-                    settings.database.unlink(missing_ok=True)
-                engine.dispose()
+                    if not is_memory_database(settings.database):
+                        Path(settings.database).unlink(missing_ok=True)
+                dispose_database_engine(settings.database)
                 try:
                     _request_generation(settings)
                 except Exception:
@@ -251,7 +256,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                         "profile": values["profile"],
                         "interface": values["interface"] if values["profile"] != "hub_no_radio" else None,
                     })
-                engine.dispose()
+                dispose_database_engine(settings.database)
                 _regenerate_or_503(settings)
                 return redirect(url_for("index"))
         return render_template("node-setup.html", values=values, errors=errors,
@@ -274,7 +279,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             db.add(Node(node_number=node_number, name=name))
             _record_change(db, current_user() or "", f"Added node {node_number}",
                            {"record": "node", "node_number": node_number, "operation": "create"})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -349,7 +354,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             _record_change(db, current_user() or "", f"Updated configuration for node {node.node_number}",
                            {"record": "node_configuration", "node_number": node.node_number,
                             "keys": sorted(values)})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("node_configuration", node_id=node_id))
 
@@ -367,7 +372,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 db.query(CustomLine).filter_by(file_name=file_name, section=str(node_number)).delete()
             _record_change(db, current_user() or "", f"Removed node {node_number}",
                            {"record": "node", "node_number": node_number, "operation": "delete"})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -393,7 +398,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             _record_change(db, current_user() or "", f"Changed network for node {node.node_number}",
                            {"record": "node", "node_number": node.node_number,
                             "network_key": node.network.stable_key if node.network else None})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -409,7 +414,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 row.value = enabled
             _record_change(db, current_user() or "", "Changed per-node network selection setting",
                            {"record": "setting", "key": "advanced_node_networks", "value": enabled})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -428,7 +433,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             _record_change(db, current_user() or "", f"Selected {network.name} as the default network",
                            {"record": "setting", "key": "default_network_key",
                             "network_key": network.stable_key})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -476,7 +481,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 network.name, network.schema_version, network.config = name.strip(), 1, config
             _record_change(db, current_user() or "", f"Imported network profile {name.strip()}",
                            {"record": "network", "stable_key": stable_key, "operation": "upsert"})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -503,7 +508,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             db.add(Network(stable_key=stable_key, name=name, schema_version=1, config=config))
             _record_change(db, current_user() or "", f"Added network profile {name}",
                            {"record": "network", "stable_key": stable_key, "operation": "create"})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
 
@@ -568,14 +573,14 @@ def create_app(settings: Settings | None = None) -> Flask:
                            {"record": "configuration_file", "filename": filename,
                             "settings_count": summary["settings"],
                             "preserved_lines_count": summary["preserved"]})
-        engine.dispose()
+        dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
         return redirect(url_for("edit_file", filename=filename))
 
     @app.get("/backup")
     @write_required
     def backup():
-        if not settings.database.is_file():
+        if not database_exists(settings.database):
             abort(404)
         snapshot = _sqlite_snapshot(settings.database)
         response = send_file(snapshot, as_attachment=True,
@@ -589,11 +594,15 @@ def create_app(settings: Settings | None = None) -> Flask:
         uploaded = request.files.get("database")
         if uploaded is None or not uploaded.filename:
             abort(400, "Choose a SQLite backup file")
-        settings.database.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=settings.database.parent, delete=False) as temp:
+        memory_database = is_memory_database(settings.database)
+        database_path = None if memory_database else Path(settings.database)
+        if database_path is not None:
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=(database_path.parent if database_path else None),
+                                         delete=False) as temp:
             temp_path = Path(temp.name)
             uploaded.save(temp)
-        previous = _sqlite_snapshot(settings.database) if settings.database.exists() else None
+        previous = _sqlite_snapshot(settings.database) if database_exists(settings.database) else None
         try:
             try:
                 with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True) as conn:
@@ -603,24 +612,24 @@ def create_app(settings: Settings | None = None) -> Flask:
                         abort(400, "Backup is missing migration metadata")
             except sqlite3.Error:
                 abort(400, "Backup is not a valid Asterisk Node Manager database")
-            if previous is not None:
-                current_stat = settings.database.stat()
+            if previous is not None and database_path is not None:
+                current_stat = database_path.stat()
                 os.chmod(temp_path, current_stat.st_mode & 0o777)
                 try:
                     os.chown(temp_path, current_stat.st_uid, current_stat.st_gid)
                 except PermissionError:
                     pass
-            os.replace(temp_path, settings.database)
-            engine.dispose()
+            restore_sqlite_snapshot(settings.database, temp_path)
+            dispose_database_engine(settings.database)
             try:
                 upgrade_database(settings.database)
                 _request_generation(settings)
             except Exception:
                 if previous is not None and previous.exists():
-                    os.replace(previous, settings.database)
-                else:
-                    settings.database.unlink(missing_ok=True)
-                engine.dispose()
+                    restore_sqlite_snapshot(settings.database, previous)
+                elif database_path is not None:
+                    database_path.unlink(missing_ok=True)
+                dispose_database_engine(settings.database)
                 raise
         finally:
             temp_path.unlink(missing_ok=True)
@@ -752,7 +761,7 @@ def _read_writer_response(client: socket.socket) -> dict:
         raise OSError("invalid or incomplete response from writer") from exc
 
 
-def _sqlite_snapshot(database: Path) -> Path:
+def _sqlite_snapshot(database: str | Path) -> Path:
     return sqlite_snapshot(database)
 
 

@@ -212,6 +212,28 @@ def test_web_database_backup_and_restore_reverts_later_changes(tmp_path):
         sessions.kw["bind"].dispose()
 
 
+def test_demo_memory_database_supports_download_and_restore(tmp_path):
+    settings = Settings(database=":memory:", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    backup = client.get("/backup")
+    assert backup.status_code == 200
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        session.add(Node(node_number=9091, name="Temporary memory node"))
+    response = client.post("/restore", data={
+        "database": (BytesIO(backup.data), "backup.sqlite3")
+    }, content_type="multipart/form-data")
+    assert response.status_code == 302
+    with session_factory(settings.database)() as session:
+        assert session.query(Node).filter_by(node_number=9091).count() == 0
+        assert session.query(Node).filter_by(node_number=1000).count() == 1
+
+
 def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path):
     settings = Settings(database=tmp_path / "editor.sqlite3", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
@@ -333,7 +355,14 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
     monkeypatch.delenv("ASTNODE_CONFIG", raising=False)
     settings = load_settings()
     assert settings.demo_mode is True
-    assert settings.database.name == "demo.sqlite3"
+    assert settings.database == ":memory:"
+
+    configured_database = tmp_path / "production.sqlite3"
+    config = tmp_path / "demo.toml"
+    config.write_text(f'[paths]\ndatabase = "{configured_database}"\n')
+    monkeypatch.setenv("ASTNODE_DATABASE", str(configured_database))
+    assert load_settings(config).database == ":memory:"
+    assert not configured_database.exists()
 
     from asterisk_node_manager.config import Settings
     try:

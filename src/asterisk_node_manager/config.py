@@ -10,7 +10,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
-    database: Path = Path("/var/lib/asterisk-node-manager/manager.sqlite3")
+    database: Path | str = Path("/var/lib/asterisk-node-manager/manager.sqlite3")
     asterisk_directory: Path = Path("/etc/asterisk")
     writer_socket: Path = Path("/run/asterisk-node-manager/writer.sock")
     writer_allowlist: Path = Path("/etc/asterisk-node-manager/writers")
@@ -36,13 +36,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
     web = raw.get("web", {})
     demo_mode = os.environ.get("ASTNODE_DEMO", str(web.get("demo_mode", "false"))).lower() in {
         "1", "true", "yes", "on"}
-    database_default = paths.get("database", Settings.database)
-    if demo_mode and "database" not in paths and "ASTNODE_DATABASE" not in os.environ:
-        database_default = Path("/var/lib/asterisk-node-manager/demo.sqlite3")
-    database = Path(os.environ.get("ASTNODE_DATABASE", database_default))
-    production_database = Settings.database.resolve()
-    if demo_mode and database.resolve() == production_database:
-        raise ValueError("Demo mode must use a separate database path")
+    # Demo data must never touch a configured production database. SQLite's
+    # in-memory database is scoped to this application process and disappears
+    # when it exits.
+    if demo_mode:
+        database: Path | str = ":memory:"
+    else:
+        database = Path(os.environ.get("ASTNODE_DATABASE", paths.get("database", Settings.database)))
     return Settings(
         database=database,
         asterisk_directory=Path(os.environ.get(

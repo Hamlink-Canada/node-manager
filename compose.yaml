@@ -27,6 +27,7 @@ services:
       ASTNODE_DATABASE: /var/lib/asterisk-node-manager/manager.sqlite3
       ASTNODE_WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
       ASTNODE_ASTERISK_DIRECTORY: /etc/asterisk
+      ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-}
     volumes:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager

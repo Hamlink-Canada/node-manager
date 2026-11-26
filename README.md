@@ -44,7 +44,10 @@ units are under debian/ and packaging/systemd/.
 
 The standard Compose file starts the web service and the privileged writer
 helper as separate containers. It binds the web port to localhost and writes
-generated files to `./asterisk-config` by default. Start it with:
+generated files to `./asterisk-config` by default. The writer uses the mounted
+configuration directory's group ID for new files. Set `ASTERISK_GID` in the
+environment to the host Asterisk group's numeric ID when the directory group
+does not match it. Start it with:
 
     docker compose up --build
 
@@ -60,8 +63,8 @@ file instead:
     docker compose -f compose.demo.yaml up --build
 
 Open http://127.0.0.1:8765. The demo login is fixed to `demo` and its username
-field is read-only. Demo changes are kept in a separate sample database and
-generated-file volume; diagnostics display sample output. The demo service
-does not start or connect to the privileged writer helper.
-Reset the demo database and generated files with
-`docker compose -f compose.demo.yaml down -v`.
+field is read-only. Demo data lives in an in-memory SQLite database and is
+discarded when the service stops; generated examples are kept in a separate
+volume. Diagnostics display sample output. The demo service does not start or
+connect to the privileged writer helper.
+Reset generated files with `docker compose -f compose.demo.yaml down -v`.
