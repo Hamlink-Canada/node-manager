@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnostics · Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><header><h1>Read-only diagnostics</h1><a href="{{ url_for('index') }}">Home</a></header><main>
+<section class="card"><p>Asterisk Node Manager {{ app_version }}</p><form method="post"><label>Asterisk command<select name="command">{% for command in choices %}<option {% if command == selected %}selected{% endif %}>{{ command }}</option>{% endfor %}</select></label><button>Run diagnostic</button></form>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}{% if output is not none %}<pre>{{ output }}</pre>{% endif %}</section>
+</main></body></html>

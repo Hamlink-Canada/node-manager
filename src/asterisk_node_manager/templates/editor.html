@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ filename }} · Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><header><h1>{{ filename }}</h1><a href="{{ url_for('files') }}">All files</a></header><main>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if preview %}<section class="card"><h2>Preview</h2><p>{{ preview.settings }} recognized settings and {{ preview.preserved }} preserved lines.</p></section>{% endif %}
+<section class="card"><form method="post"><label>Configuration text
+<textarea name="content" rows="32" spellcheck="false" {% if not can_write %}readonly{% endif %}>{{ content }}</textarea></label>
+{% if can_write %}<button name="action" value="preview">Preview</button>
+{% if preview %}<input type="hidden" name="confirmed" value="yes"><button class="danger" name="action" value="commit">Commit and regenerate files</button>{% endif %}{% endif %}
+</form></section></main></body></html>

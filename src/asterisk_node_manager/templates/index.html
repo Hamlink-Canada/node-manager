@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><header><h1>Asterisk Node Manager</h1><form action="{{ url_for('logout') }}" method="post"><span>{{ username }}</span> <button>Sign out</button></form></header>
+<main><section class="card"><h2>Configuration</h2><p>{{ node_count }} node(s)</p>
+<p><a href="{{ url_for('files') }}">Edit generated configuration files</a></p>
+<p><a href="{{ url_for('diagnostics') }}">Read-only Asterisk diagnostics</a></p>
+<h3>Recent changes</h3><ul>{% for change in changes %}<li>{{ change.created_at }} — {{ change.actor }}: {{ change.summary }}</li>{% else %}<li>No changes recorded</li>{% endfor %}</ul>
+<h3>Nodes</h3><ul>{% for node in nodes %}<li>{{ node.node_number }} — {{ node.name }}
+{% if advanced_networks %}<form class="inline" method="post" action="{{ url_for('assign_network', node_id=node.id) }}"><label>Network
+<select name="network_id"><option value="">Default network</option>{% for network in networks %}<option value="{{ network.id }}" {% if node.network_id == network.id %}selected{% endif %}>{{ network.name }}</option>{% endfor %}</select></label><button>Save</button></form>{% endif %}
+{% if is_writer() %}<form class="inline" method="post" action="{{ url_for('delete_node', node_id=node.id) }}"><button class="danger">Remove</button></form>{% endif %}</li>{% else %}<li>No nodes configured</li>{% endfor %}</ul>
+{% if is_writer() %}<form method="post" action="{{ url_for('create_node') }}"><label>Node Number <input name="node_number" type="number" min="1" required></label><label>Name <input name="name" required></label><button>Add node</button></form>{% endif %}
+<h3>Network profiles</h3><ul>{% for network in networks %}<li>{{ network.name }}{% if network.stable_key == default_network %} (default){% endif %}</li>{% else %}<li>No network profiles</li>{% endfor %}</ul>
+{% if is_writer() %}<form method="post" action="{{ url_for('default_network') }}"><label>Default network <select name="network_id">{% for network in networks %}<option value="{{ network.id }}" {% if network.stable_key == default_network %}selected{% endif %}>{{ network.name }}</option>{% endfor %}</select></label><button>Save default</button></form>
+<form method="post" action="{{ url_for('network_selection') }}"><input type="hidden" name="enabled" value="{{ 'false' if advanced_networks else 'true' }}"><button>{{ 'Disable' if advanced_networks else 'Enable' }} advanced per-node network selection</button></form>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('import_network') }}"><label>Import network JSON <input type="file" name="network" accept="application/json,.json" required></label><button>Preview import</button></form>
+<form method="post" action="{{ url_for('create_network') }}"><h4>Add network manually</h4><label>Stable key <input name="key" pattern="[a-zA-Z0-9._-]+" maxlength="120" required></label><label>Name <input name="name" maxlength="200" required></label><label>Configuration JSON <textarea name="config" rows="5">{}</textarea></label><button>Preview network</button></form>
+{% endif %}
+<p><a href="{{ url_for('backup') }}">Download database backup</a></p></section>
+{% if is_writer() %}<section class="card"><h2>Restore database</h2><p>Restoring replaces the current database and regenerates configuration files.</p>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('restore') }}" onsubmit="return confirm('Restore this database and regenerate configuration?')"><label>SQLite backup <input type="file" name="database" accept=".sqlite,.sqlite3,.db" required></label><button class="danger">Restore database</button></form></section>{% endif %}
+</main></body></html>

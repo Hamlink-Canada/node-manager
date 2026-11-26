@@ -1,0 +1,20 @@
+[Unit]
+Description=Asterisk Node Manager web interface
+After=network.target
+
+[Service]
+Type=simple
+User=asterisk-node-manager
+Group=asterisk-node-manager
+Environment=ASTNODE_CONFIG=/etc/asterisk-node-manager/config.toml
+ExecStart=/usr/bin/astnode-web
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/asterisk-node-manager
+RuntimeDirectory=asterisk-node-manager
+
+[Install]
+WantedBy=multi-user.target

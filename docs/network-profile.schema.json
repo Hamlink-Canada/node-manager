@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Asterisk Node Manager network profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "key", "name", "config"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "key": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-zA-Z0-9._-]+$"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "config": {"type": "object"}
+  }
+}

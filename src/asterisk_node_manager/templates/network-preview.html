@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview network profile · Asterisk Node Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><header><h1>Preview network profile</h1><a href="{{ url_for('index') }}">Cancel</a></header><main>
+<section class="card"><p><strong>{{ name }}</strong> ({{ stable_key }})</p>
+<p>{% if exists %}This updates the matching profile in place. Its default and node assignments remain unchanged.{% else %}This adds a new profile.{% endif %}</p>
+<pre>{{ config_json }}</pre>
+<form method="post" action="{{ url_for('import_network') if source == 'upload' else url_for('create_network') }}">
+<input type="hidden" name="action" value="commit"><input type="hidden" name="key" value="{{ stable_key }}">
+<input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="config" value="{{ config_json }}">
+{% if source == 'upload' %}<input type="hidden" name="schema_version" value="1">{% endif %}
+<button class="danger">Commit profile and regenerate files</button></form></section></main></body></html>
