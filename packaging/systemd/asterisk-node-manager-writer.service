@@ -11,7 +11,7 @@ Environment=ASTNODE_CONFIG=/etc/asterisk-node-manager/config.toml
 ExecStart=/usr/bin/astnode-writer
 Restart=on-failure
 NoNewPrivileges=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=true
 ReadOnlyPaths=/var/lib/asterisk-node-manager
 ReadWritePaths=/etc/asterisk

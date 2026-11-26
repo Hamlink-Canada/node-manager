@@ -322,11 +322,14 @@ def create_app(settings: Settings | None = None) -> Flask:
         previous = settings.database.with_suffix(settings.database.suffix + ".restore-previous")
         try:
             import sqlite3
-            with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True) as conn:
-                check = conn.execute("PRAGMA integrity_check").fetchone()
-                version = conn.execute("SELECT version_num FROM alembic_version").fetchone()
-                if check is None or check[0] != "ok" or version is None:
-                    abort(400, "Backup is missing migration metadata")
+            try:
+                with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True) as conn:
+                    check = conn.execute("PRAGMA integrity_check").fetchone()
+                    version = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+                    if check is None or check[0] != "ok" or version is None:
+                        abort(400, "Backup is missing migration metadata")
+            except sqlite3.Error:
+                abort(400, "Backup is not a valid Asterisk Node Manager database")
             if settings.database.exists():
                 shutil.copy2(settings.database, previous)
             os.replace(temp_path, settings.database)

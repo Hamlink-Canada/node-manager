@@ -6,11 +6,10 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-class Base(DeclarativeBase):
-    """Declarative base for persistent application models."""
+Base = declarative_base()
 
 
 def create_database_engine(path: str | Path) -> Engine:

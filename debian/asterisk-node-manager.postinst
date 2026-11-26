@@ -19,6 +19,8 @@ case "$1" in
       install -o root -g asterisk-node-manager -m 0640 /dev/null /etc/asterisk-node-manager/writers
     fi
     /usr/bin/astnode --config /etc/asterisk-node-manager/config.toml init
+    chown asterisk-node-manager:asterisk-node-manager /var/lib/asterisk-node-manager/manager.sqlite3
+    chmod 0640 /var/lib/asterisk-node-manager/manager.sqlite3
     ;;
 esac
 

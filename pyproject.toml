@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.26"]
+requires = ["hatchling>=1.12.2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Asterisk Node Manager contributors" }]
-dependencies = ["Alembic>=1.13", "Flask>=3.0", "Jinja2>=3.1", "python-pam>=2.0", "SQLAlchemy>=2.0", "waitress>=3.0"]
+dependencies = ["Alembic>=1.8", "Flask>=2.2", "Jinja2>=3.0", "python-pam>=2.0", "SQLAlchemy>=1.4.24", "waitress>=2.1"]
 classifiers = [
   "Environment :: Console",
   "Environment :: Web Environment",

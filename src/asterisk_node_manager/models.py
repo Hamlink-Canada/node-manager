@@ -1,74 +1,82 @@
-"""SQLAlchemy models for managed configuration and audit history."""
+"""SQLAlchemy models compatible with SQLAlchemy 1.4 and 2.x."""
 
-from __future__ import annotations
-
-from datetime import datetime
-
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import relationship
 
 from .database import Base
 
 
 class Setting(Base):
     __tablename__ = "settings"
-    key: Mapped[str] = mapped_column(String(120), primary_key=True)
-    value: Mapped[str] = mapped_column(Text, nullable=False)
+    key = Column(String(120), primary_key=True)
+    value = Column(Text, nullable=False)
 
 
 class Network(Base):
     __tablename__ = "networks"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    stable_key: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
-    nodes: Mapped[list["Node"]] = relationship(back_populates="network")
+    id = Column(Integer, primary_key=True)
+    stable_key = Column(String(120), unique=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1)
+    config = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())
+    nodes = relationship("Node", back_populates="network")
 
 
 class Node(Base):
     __tablename__ = "nodes"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    node_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    network_id: Mapped[int | None] = mapped_column(ForeignKey("networks.id"))
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    network: Mapped[Network | None] = relationship(back_populates="nodes")
+    id = Column(Integer, primary_key=True)
+    node_number = Column(Integer, unique=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    network_id = Column(ForeignKey("networks.id"))
+    enabled = Column(Boolean, nullable=False, default=True)
+    settings = Column(JSON, nullable=False, default=dict)
+    network = relationship("Network", back_populates="nodes")
 
 
 class ConfigValue(Base):
     __tablename__ = "config_values"
     __table_args__ = (UniqueConstraint("file_name", "section", "key"),)
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    file_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    section: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    key: Mapped[str] = mapped_column(String(200), nullable=False)
-    value: Mapped[str] = mapped_column(Text, nullable=False)
-    secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    id = Column(Integer, primary_key=True)
+    file_name = Column(String(200), nullable=False)
+    section = Column(String(200), nullable=False, default="")
+    key = Column(String(200), nullable=False)
+    value = Column(Text, nullable=False)
+    secret = Column(Boolean, nullable=False, default=False)
 
 
 class CustomLine(Base):
     __tablename__ = "custom_lines"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    file_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    section: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    line_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    id = Column(Integer, primary_key=True)
+    file_name = Column(String(200), nullable=False)
+    section = Column(String(200), nullable=False, default="")
+    line_number = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
 
 
 class Change(Base):
     __tablename__ = "changes"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    actor: Mapped[str] = mapped_column(String(200), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    revision: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    id = Column(Integer, primary_key=True)
+    actor = Column(String(200), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    summary = Column(Text, nullable=False)
+    revision = Column(Integer, unique=True, nullable=False)
 
 
 class GeneratedFile(Base):
     __tablename__ = "generated_files"
-    revision: Mapped[int] = mapped_column(ForeignKey("changes.revision"), primary_key=True)
-    file_name: Mapped[str] = mapped_column(String(200), primary_key=True)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision = Column(ForeignKey("changes.revision"), primary_key=True)
+    file_name = Column(String(200), primary_key=True)
+    sha256 = Column(String(64), nullable=False)
