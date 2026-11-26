@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {% block head %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Asterisk Node Manager{% endblock %}</title>
+  {{ bootstrap.load_css() }}
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% endblock %}
+</head>
+<body class="bg-body-tertiary">
+  {% if demo_mode %}
+  <div class="demo-banner text-center py-2 px-3">
+    <span class="badge text-bg-dark me-2">DEMO</span>
+    Changes stay in the sample database and generated files. Diagnostics use sample output.
+  </div>
+  {% endif %}
+  <nav class="navbar navbar-expand-lg navbar-dark app-navbar">
+    <div class="container">
+      <a class="navbar-brand fw-semibold" href="{{ url_for('index') }}">
+        <span class="brand-mark me-2">A</span>Asterisk Node Manager
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+              aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="mainNav">
+        {% if session.get('username') %}
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Overview</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('files') }}">Configuration files</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('diagnostics') }}">Diagnostics</a></li>
+        </ul>
+        <div class="d-flex align-items-center gap-3 ms-lg-auto">
+          {% if demo_mode %}
+          <label class="demo-login text-white-50 small mb-0">Demo user
+            <input class="form-control form-control-sm" value="{{ demo_username }}" readonly aria-label="Demo username">
+          </label>
+          {% else %}
+          <span class="small text-white-50">{{ session.get('username') }}</span>
+          {% endif %}
+          <form action="{{ url_for('logout') }}" method="post">
+            <button class="btn btn-outline-light btn-sm" type="submit">Sign out</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  <main class="container py-4 py-lg-5">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container pb-4 text-center text-body-secondary small">
+    Asterisk Node Manager{% if demo_mode %} · isolated demonstration{% endif %}
+  </footer>
+  {{ bootstrap.load_js() }}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,2 +1,92 @@
-:root{font:16px system-ui,sans-serif;color:#202833;background:#f1f4f7}body{margin:0}header{display:flex;justify-content:space-between;align-items:center;padding:1rem max(1rem,calc((100% - 56rem)/2));background:#14283e;color:#fff}header h1{font-size:1.25rem}main{max-width:56rem;margin:2rem auto;padding:0 1rem}.card{background:#fff;border:1px solid #d7dee6;border-radius:.5rem;padding:1.25rem;margin-bottom:1rem}label{display:block;margin:1rem 0}input,select{display:block;box-sizing:border-box;width:100%;max-width:30rem;padding:.55rem;margin-top:.35rem}textarea{display:block;box-sizing:border-box;width:100%;padding:.75rem;font:14px ui-monospace,monospace}button{padding:.55rem .9rem;border:0;border-radius:.25rem;background:#1769aa;color:#fff;cursor:pointer}.danger{background:#9d2525}.inline{display:inline-block;margin-left:1rem}.inline label{display:inline-block}.error{color:#a11}
-.demo-banner{display:block;padding:.7rem 1.4rem;color:#342600;background:#ffe08a;font-weight:700}.demo-login{display:inline-flex;align-items:center;gap:.35rem;margin:0}.demo-login input{width:7rem;max-width:7rem;margin:0;padding:.25rem}
+:root {
+  --anm-ink: #172c43;
+  --anm-blue: #1769aa;
+  --anm-cyan: #61c6d6;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.app-navbar {
+  background: linear-gradient(112deg, var(--anm-ink), #21496b);
+  box-shadow: 0 .25rem 1rem rgb(23 44 67 / 16%);
+}
+
+.brand-mark {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: .55rem;
+  background: var(--anm-cyan);
+  color: var(--anm-ink);
+  font-weight: 800;
+}
+
+.brand-mark-lg {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.35rem;
+}
+
+.demo-banner {
+  background: #fff0c2;
+  color: #543f0a;
+}
+
+.login-shell {
+  min-height: min(68vh, 42rem);
+}
+
+.card {
+  --bs-card-border-color: #e1e7ed;
+}
+
+.card-header {
+  border-bottom-color: #e8edf2;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: #73a9d3;
+  box-shadow: 0 0 0 .2rem rgb(23 105 170 / 14%);
+}
+
+.config-editor {
+  min-height: 32rem;
+  tab-size: 4;
+  font-size: .875rem;
+  line-height: 1.55;
+}
+
+.diff-output,
+.json-output,
+.terminal-output {
+  overflow: auto;
+  max-height: 34rem;
+  border: 1px solid #25384b;
+  border-radius: .5rem;
+  background: #142536;
+  color: #e4edf6;
+  padding: 1rem;
+  font-size: .84rem;
+  line-height: 1.55;
+}
+
+.diff-output,
+.terminal-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.json-output {
+  white-space: pre;
+}
+
+@media (max-width: 575.98px) {
+  .config-editor {
+    min-height: 24rem;
+  }
+}
