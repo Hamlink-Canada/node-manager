@@ -23,6 +23,7 @@ def test_secret_detection_covers_password_tokens_and_credentials():
     assert is_secret_key("registerpassword")
     assert is_secret_key("api_key")
     assert is_secret_key("auth-token")
+    assert is_secret_key("register")
     assert not is_secret_key("callerid")
     assert SECRET_VALUE == "[hidden]"
 

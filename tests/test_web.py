@@ -269,7 +269,7 @@ def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
                                    content="register => demo:secret@host.invalid"))
         sessions.kw["bind"].dispose()
         page = client.get("/files/iax.conf")
-        assert b"register => [hidden]" in page.data
+        assert b"register =&gt; [hidden]" in page.data
         assert b"secret@host.invalid" not in page.data
         content = "[general]\nregister => [hidden]\n"
         preview = client.post("/files/iax.conf", data={"action": "preview", "content": content})

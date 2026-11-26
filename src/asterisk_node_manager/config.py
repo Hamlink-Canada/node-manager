@@ -40,7 +40,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if demo_mode and "database" not in paths and "ASTNODE_DATABASE" not in os.environ:
         database_default = Path("/var/lib/asterisk-node-manager/demo.sqlite3")
     database = Path(os.environ.get("ASTNODE_DATABASE", database_default))
-    production_database = Path(paths.get("database", Settings.database)).resolve()
+    production_database = Settings.database.resolve()
     if demo_mode and database.resolve() == production_database:
         raise ValueError("Demo mode must use a separate database path")
     return Settings(
