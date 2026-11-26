@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 [build-system]
 requires = ["hatchling>=1.12.2"]
 build-backend = "hatchling.build"
@@ -27,7 +24,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4"]
+test = ["build>=1.6,<2", "pytest>=7.4"]
 
 [project.scripts]
 astnode = "asterisk_node_manager.cli:main"
@@ -39,3 +36,7 @@ packages = ["src/asterisk_node_manager"]
 
 [tool.hatch.build]
 include = ["tests/**", "src/asterisk_node_manager/web/templates/**", "src/asterisk_node_manager/web/static/**", "src/asterisk_node_manager/conf/**", "src/asterisk_node_manager/translations/**", "src/asterisk_node_manager/migrations/**", "src/asterisk_node_manager/alembic.ini"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
