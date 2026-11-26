@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 """Command-line entry point."""
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ from .config import load_settings
 from .database import session_factory
 from .asterisk_config import is_secret_key, parse_config
 from .migrate import upgrade_database
-from .models import Change, ConfigValue, CustomLine, Network, Node
+from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings
+from .configuration import NODE_CONFIG_FIELDS, apply_node_config_values, node_fields_for_file
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -135,7 +139,7 @@ def _import_config(path: Path, commit: bool, settings) -> int:
     recognized = 0
     preserved = 0
     for item in files:
-            rows = parse_config(item.name, item.read_text(errors="replace"))
+        rows = parse_config(item.name, item.read_text(errors="replace"))
         recognized += sum(len(section) for section in rows[0].values())
         preserved += sum(len(lines) for lines in rows[1].values())
         print(f"  {item.name}: {sum(len(section) for section in rows[0].values())} settings, "
@@ -154,21 +158,42 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                     if section.isdigit():
                         node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
                         if node is None:
-                            node = Node(node_number=int(section), name=f"Node {section}", settings={})
+                            node = Node(node_number=int(section), name=f"Node {section}")
                             db.add(node)
-                        node.settings = entries
+                        apply_node_config_values(node, entries)
+                        for key, value in entries.items():
+                            if key in NODE_CONFIG_FIELDS:
+                                continue
+                            _set_config_value(db, item.name, section, key, value)
+                        continue
+            if item.name == "simpleusb.conf":
+                known_usb = node_fields_for_file("simpleusb.conf")
+                for section, entries in values.items():
+                    if section.isdigit():
+                        node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                        if node is None:
+                            node = Node(node_number=int(section), name=f"Node {section}")
+                            db.add(node)
+                        if node.simpleusb_settings is None:
+                            node.simpleusb_settings = SimpleUSBSettings()
+                        for key, value in entries.items():
+                            if key not in known_usb:
+                                _set_config_value(db, item.name, section, key, value)
+                                continue
+                            if key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}:
+                                value = value.lower() in {"yes", "true", "1", "on"}
+                            elif key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}:
+                                try:
+                                    value = int(value)
+                                except ValueError:
+                                    continue
+                            setattr(node.simpleusb_settings, key, value)
                         continue
             for section, entries in values.items():
-                if item.name == "rpt.conf" and section.isdigit():
+                if item.name in {"rpt.conf", "simpleusb.conf"} and section.isdigit():
                     continue
                 for key, value in entries.items():
-                    old = db.query(ConfigValue).filter_by(file_name=item.name, section=section, key=key).one_or_none()
-                    if old is None:
-                        db.add(ConfigValue(file_name=item.name, section=section, key=key, value=value,
-                                           secret=is_secret_key(key)))
-                    else:
-                        old.value = value
-                        old.secret = is_secret_key(key)
+                    _set_config_value(db, item.name, section, key, value)
             db.query(CustomLine).filter_by(file_name=item.name).delete()
             for section, entries in lines.items():
                 for index, content in enumerate(entries):
@@ -184,6 +209,16 @@ def _import_config(path: Path, commit: bool, settings) -> int:
     _replace_files(settings.asterisk_directory, render_database(settings.database))
     print(f"Imported {len(files)} files and regenerated Asterisk configuration.")
     return 0
+
+
+def _set_config_value(db, filename: str, section: str, key: str, value: str) -> None:
+    old = db.query(ConfigValue).filter_by(file_name=filename, section=section, key=key).one_or_none()
+    if old is None:
+        db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
+                           secret=is_secret_key(key)))
+    else:
+        old.value = value
+        old.secret = is_secret_key(key)
 
 
 if __name__ == "__main__":

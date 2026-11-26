@@ -1,8 +1,11 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 {% extends "layout.html" %}
 {% block title %}{{ filename }} · Asterisk Node Manager{% endblock %}
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-  <div><p class="text-uppercase text-primary fw-semibold small mb-1">Generated configuration</p><h1 class="h2 font-monospace mb-1">{{ filename }}</h1><p class="text-body-secondary mb-0">Review the changes before committing them.</p></div>
+  <div><p class="text-uppercase text-primary fw-semibold small mb-1">Advanced configuration</p><h1 class="h2 font-monospace mb-1">{{ filename }}</h1><p class="text-body-secondary mb-0">Review the changes before committing them.</p></div>
   <a class="btn btn-outline-secondary" href="{{ url_for('files') }}">All configuration files</a>
 </div>
 {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}

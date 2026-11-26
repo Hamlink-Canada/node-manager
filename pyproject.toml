@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 [build-system]
 requires = ["hatchling>=1.12.2"]
 build-backend = "hatchling.build"
@@ -31,4 +34,4 @@ astnode-writer = "asterisk_node_manager.writer:main"
 packages = ["src/asterisk_node_manager"]
 
 [tool.hatch.build]
-include = ["src/asterisk_node_manager/web/templates/**", "src/asterisk_node_manager/web/static/**", "src/asterisk_node_manager/conf/**", "src/asterisk_node_manager/migrations/**", "src/asterisk_node_manager/alembic.ini"]
+include = ["src/asterisk_node_manager/web/templates/**", "src/asterisk_node_manager/web/static/**", "src/asterisk_node_manager/conf/**", "src/asterisk_node_manager/translations/**", "src/asterisk_node_manager/migrations/**", "src/asterisk_node_manager/alembic.ini"]

@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 """Flask management interface."""
 
 from __future__ import annotations
@@ -21,10 +24,20 @@ from .config import Settings, load_settings
 from .database import session_factory
 from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
-from .models import Change, ConfigValue, CustomLine, Network, Node, Setting
+from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings
 from .migrate import upgrade_database
 from .demo import DEMO_USERNAME, initialize_demo
 from . import __version__
+from .configuration import (
+    NODE_CONFIG_FIELDS,
+    apply_node_config_values,
+    available_locales,
+    node_field_groups,
+    node_config_values,
+    node_fields_for_file,
+    translate,
+    validate_node_settings,
+)
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -38,6 +51,10 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.secret_key = _read_secret(settings.secret_key_file, demo_mode=settings.demo_mode)
     app.config["MAX_CONTENT_LENGTH"] = 104_857_600
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+    def request_locale() -> str:
+        return request.accept_languages.best_match(available_locales()) or "en"
+
+    app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
     engine = sessions.kw["bind"]
 
@@ -128,12 +145,86 @@ def create_app(settings: Settings | None = None) -> Flask:
             if db.scalar(select(Node.id).where(Node.node_number == node_number)) is not None:
                 abort(409, "That Node Number is already configured")
         with sessions.begin() as db:
-            db.add(Node(node_number=node_number, name=name, settings={}))
+            db.add(Node(node_number=node_number, name=name))
             _record_change(db, current_user() or "", f"Added node {node_number}",
                            {"record": "node", "node_number": node_number, "operation": "create"})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
+
+    @app.route("/nodes/<int:node_id>/configuration", methods=["GET", "POST"])
+    @login_required
+    def node_configuration(node_id: int):
+        with sessions() as db:
+            node = db.get(Node, node_id)
+            if node is None:
+                abort(404)
+            node_number, name = node.node_number, node.name
+            existing = node_config_values(node)
+            for value in db.scalars(select(ConfigValue).where(
+                    ConfigValue.file_name == "rpt.conf",
+                    ConfigValue.section == str(node_number))).all():
+                existing[value.key] = value.value
+            if node.simpleusb_settings:
+                for key in node_fields_for_file("simpleusb.conf"):
+                    value = getattr(node.simpleusb_settings, key)
+                    existing[key] = str(value).lower() if isinstance(value, bool) else str(value)
+            simpleusb_values = db.scalars(select(ConfigValue).where(
+                ConfigValue.file_name == "simpleusb.conf",
+                ConfigValue.section == str(node_number))).all()
+            existing.update({value.key: value.value for value in simpleusb_values})
+        if request.method == "GET":
+            groups = node_field_groups(node_number, existing, request_locale())
+            return render_template("node-configuration.html", node_id=node_id,
+                                   node_number=node_number, node_name=name,
+                                   groups=[group for group in groups if not group["advanced"]],
+                                   advanced_groups=[group for group in groups if group["advanced"]],
+                                   advanced_view=False, can_write=current_user() in writers(), errors={})
+        if current_user() not in writers():
+            abort(403)
+        values, errors = validate_node_settings(request.form, node_number, existing)
+        if errors:
+            groups = node_field_groups(node_number, request.form, request_locale())
+            return render_template("node-configuration.html", node_id=node_id,
+                                   node_number=node_number, node_name=name,
+                                   groups=[group for group in groups if not group["advanced"]],
+                                   advanced_groups=[group for group in groups if group["advanced"]],
+                                   advanced_view=request.form.get("advanced_view") == "yes",
+                                   can_write=True, errors=errors), 400
+        with sessions.begin() as db:
+            node = db.get(Node, node_id)
+            if node is None:
+                abort(404)
+            apply_node_config_values(node, values)
+            simpleusb_fields = node_fields_for_file("simpleusb.conf")
+            usb = node.simpleusb_settings
+            if values["rxchannel"].startswith("SimpleUSB/"):
+                if usb is None:
+                    usb = SimpleUSBSettings(node=node)
+                    db.add(usb)
+                for key in simpleusb_fields:
+                    definition_value = values[key]
+                    setattr(usb, key, definition_value in {"yes", "true", "1"}
+                            if key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}
+                            else int(definition_value) if key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}
+                            else definition_value)
+            for key, value in values.items():
+                if key in NODE_CONFIG_FIELDS or key in simpleusb_fields:
+                    continue
+                row = db.scalar(select(ConfigValue).where(
+                    ConfigValue.file_name == "rpt.conf", ConfigValue.section == str(node.node_number),
+                    ConfigValue.key == key))
+                if row is None:
+                    db.add(ConfigValue(file_name="rpt.conf", section=str(node.node_number),
+                                       key=key, value=value, secret=False))
+                else:
+                    row.value = value
+            _record_change(db, current_user() or "", f"Updated configuration for node {node.node_number}",
+                           {"record": "node_configuration", "node_number": node.node_number,
+                            "keys": sorted(values)})
+        engine.dispose()
+        _regenerate_or_503(settings)
+        return redirect(url_for("node_configuration", node_id=node_id))
 
     @app.post("/nodes/<int:node_id>/delete")
     @write_required
@@ -484,9 +575,17 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                 retained.add(section)
                 node = existing_nodes.get(section)
                 if node is None:
-                    db.add(Node(node_number=int(section), name=f"Node {section}", settings=entries))
-                else:
-                    node.settings = _restore_hidden_settings(entries, node.settings)
+                    node = Node(node_number=int(section), name=f"Node {section}")
+                    db.add(node)
+                apply_node_config_values(node, entries)
+                for key, value in entries.items():
+                    if key in NODE_CONFIG_FIELDS:
+                        continue
+                    previous = prior_values.get((section, key))
+                    if value == SECRET_VALUE and previous is not None and previous.secret:
+                        value = previous.value
+                    db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
+                                       secret=is_secret_key(key)))
                 continue
             for key, value in entries.items():
                 previous = prior_values.get((section, key))
@@ -498,7 +597,32 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
             if section not in retained:
                 db.delete(node)
     else:
+        usb_fields = node_fields_for_file("simpleusb.conf")
         for section, entries in values.items():
+            if filename == "simpleusb.conf" and section.isdigit():
+                node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                if node is None:
+                    node = Node(node_number=int(section), name=f"Node {section}")
+                    db.add(node)
+                if node.simpleusb_settings is None:
+                    node.simpleusb_settings = SimpleUSBSettings()
+                for key, value in entries.items():
+                    if key not in usb_fields:
+                        previous = prior_values.get((section, key))
+                        if value == SECRET_VALUE and previous is not None and previous.secret:
+                            value = previous.value
+                        db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
+                                           secret=is_secret_key(key)))
+                    elif key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}:
+                        setattr(node.simpleusb_settings, key, value.lower() in {"yes", "true", "1", "on"})
+                    elif key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}:
+                        try:
+                            setattr(node.simpleusb_settings, key, int(value))
+                        except ValueError:
+                            pass
+                    else:
+                        setattr(node.simpleusb_settings, key, value)
+                continue
             for key, value in entries.items():
                 previous = prior_values.get((section, key))
                 if value == SECRET_VALUE and previous is not None and previous.secret:
@@ -508,14 +632,6 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
     for section, lines in preserved.items():
         for index, line in enumerate(lines):
             db.add(CustomLine(file_name=filename, section=section, line_number=index, content=line))
-
-
-def _restore_hidden_settings(new: dict[str, str], old: dict[str, str]) -> dict[str, str]:
-    result = dict(new)
-    for key, value in result.items():
-        if value == SECRET_VALUE and key in old and is_secret_key(key):
-            result[key] = old[key]
-    return result
 
 
 def _mask_secrets(text: str) -> str:

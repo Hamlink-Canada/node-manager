@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 """Safe sample data used only by the isolated demo mode."""
 
 from __future__ import annotations
@@ -6,7 +9,7 @@ from sqlalchemy import select
 
 from .database import session_factory
 from .migrate import upgrade_database
-from .models import Change, ConfigValue, Node, Setting
+from .models import Change, ConfigValue, Node, Setting, SimpleUSBSettings
 
 DEMO_USERNAME = "demo"
 
@@ -26,12 +29,10 @@ def initialize_demo(database) -> None:
                 advanced_networks.value = "false"
 
             db.add_all([
-                Node(node_number=1000, name="Demo Node North", settings={
-                    "duplex": "0", "rxchannel": "SimpleUSB/usb", "txchannel": "SimpleUSB/usb",
-                }),
-                Node(node_number=1001, name="Demo Node South", settings={
-                    "duplex": "0", "rxchannel": "SimpleUSB/usb", "txchannel": "SimpleUSB/usb",
-                }),
+                Node(node_number=1000, name="Demo Node North", duplex=0,
+                     rxchannel="SimpleUSB/1000", simpleusb_settings=SimpleUSBSettings()),
+                Node(node_number=1001, name="Demo Node South", duplex=0,
+                     rxchannel="SimpleUSB/1001", simpleusb_settings=SimpleUSBSettings()),
                 ConfigValue(file_name="iax.conf", section="general", key="bindport",
                             value="4569", secret=False),
                 ConfigValue(file_name="extensions.conf", section="demo", key="exten",
