@@ -8,10 +8,12 @@ Network profile config is stored and re-exported as an opaque JSON object.
 Its properties and how they map to Asterisk settings remain undefined until
 the profile format is specified.
 
-The astnode CLI and Flask application use the same library, database models,
-and bundled Jinja2 templates. Configuration-file edits and network profile
-uploads are validated and previewed before commit. A committed change is
-rendered into a fixed allowlist of Asterisk configuration filenames.
+The astnode CLI and Flask application use the same library and database
+models. Flask templates and static assets live under the package's `web/`
+directory; Asterisk configuration templates live under `conf/`.
+Configuration-file edits and network profile uploads are validated and
+previewed before commit. A committed change is rendered into a fixed allowlist
+of Asterisk configuration filenames.
 
 The web service runs as the asterisk-node-manager system user. It cannot
 write Asterisk configuration files. It connects to the root-owned,

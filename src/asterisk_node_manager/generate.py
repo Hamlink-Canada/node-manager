@@ -19,7 +19,7 @@ GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
 
 
 def render_database(database: str | Path) -> dict[str, bytes]:
-    templates = Environment(loader=PackageLoader("asterisk_node_manager", "templates"),
+    templates = Environment(loader=PackageLoader("asterisk_node_manager", "conf"),
                             autoescape=False, undefined=StrictUndefined,
                             keep_trailing_newline=True)
     output: dict[str, bytes] = {}
