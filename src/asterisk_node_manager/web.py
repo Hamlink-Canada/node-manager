@@ -105,8 +105,11 @@ def create_app(settings: Settings | None = None) -> Flask:
         except ValueError:
             abort(400, "Node Number must be an integer")
         name = request.form.get("name", "").strip()
-        if node_number < 1 or not name:
+        if node_number < 1 or not name or len(name) > 200:
             abort(400, "Provide a positive Node Number and a name")
+        with sessions() as db:
+            if db.scalar(select(Node.id).where(Node.node_number == node_number)) is not None:
+                abort(409, "That Node Number is already configured")
         with sessions.begin() as db:
             db.add(Node(node_number=node_number, name=name, settings={}))
             _record_change(db, current_user() or "", f"Added node {node_number}",
@@ -139,7 +142,11 @@ def create_app(settings: Settings | None = None) -> Flask:
                 abort(404)
             raw_id = request.form.get("network_id", "")
             if raw_id:
-                network = db.get(Network, int(raw_id))
+                try:
+                    network_id = int(raw_id)
+                except ValueError:
+                    abort(400, "Choose a valid network profile")
+                network = db.get(Network, network_id)
                 if network is None:
                     abort(400, "Unknown network profile")
                 node.network = network
@@ -205,7 +212,10 @@ def create_app(settings: Settings | None = None) -> Flask:
                 profile = json.loads(uploaded.read().decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 abort(400, "Network file must contain valid UTF-8 JSON")
-        if not isinstance(profile, dict) or profile.get("schema_version") != 1:
+        if (not isinstance(profile, dict)
+                or set(profile) != {"schema_version", "key", "name", "config"}
+                or type(profile.get("schema_version")) is not int
+                or profile.get("schema_version") != 1):
             abort(400, "Unsupported network profile schema")
         stable_key, name, config = profile.get("key"), profile.get("name"), profile.get("config")
         if (not isinstance(stable_key, str) or not re.fullmatch(r"[a-zA-Z0-9._-]{1,120}", stable_key)
