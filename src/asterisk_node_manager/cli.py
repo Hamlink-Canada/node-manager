@@ -175,7 +175,9 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                     db.add(CustomLine(file_name=item.name, section=section, line_number=index, content=content))
         revision = (db.query(Change.revision).order_by(Change.revision.desc()).first() or (0,))[0] + 1
         db.add(Change(actor=os.environ.get("SUDO_USER", os.environ.get("USER", "root")),
-                      summary=f"Imported configuration from {path}", revision=revision))
+                      summary=f"Imported configuration from {path}", revision=revision,
+                      details={"record": "configuration_import",
+                               "files": [item.name for item in files]}))
         db.commit()
     from .writer import _replace_files
     from .generate import render_database

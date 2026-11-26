@@ -73,6 +73,7 @@ class Change(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     summary = Column(Text, nullable=False)
     revision = Column(Integer, unique=True, nullable=False)
+    details = Column(JSON, nullable=False, default=dict)
 
 
 class GeneratedFile(Base):

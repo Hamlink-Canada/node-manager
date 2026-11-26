@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import difflib
 import shutil
 import socket
 import tempfile
@@ -108,7 +109,8 @@ def create_app(settings: Settings | None = None) -> Flask:
             abort(400, "Provide a positive Node Number and a name")
         with sessions.begin() as db:
             db.add(Node(node_number=node_number, name=name, settings={}))
-            _record_change(db, current_user() or "", f"Added node {node_number}")
+            _record_change(db, current_user() or "", f"Added node {node_number}",
+                           {"record": "node", "node_number": node_number, "operation": "create"})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -121,7 +123,9 @@ def create_app(settings: Settings | None = None) -> Flask:
             if node is None:
                 abort(404)
             db.delete(node)
-            _record_change(db, current_user() or "", f"Removed node {node.node_number}")
+            node_number = node.node_number
+            _record_change(db, current_user() or "", f"Removed node {node_number}",
+                           {"record": "node", "node_number": node_number, "operation": "delete"})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -141,7 +145,9 @@ def create_app(settings: Settings | None = None) -> Flask:
                 node.network = network
             else:
                 node.network = None
-            _record_change(db, current_user() or "", f"Changed network for node {node.node_number}")
+            _record_change(db, current_user() or "", f"Changed network for node {node.node_number}",
+                           {"record": "node", "node_number": node.node_number,
+                            "network_key": node.network.stable_key if node.network else None})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -156,7 +162,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                 db.add(Setting(key="advanced_node_networks", value=enabled))
             else:
                 row.value = enabled
-            _record_change(db, current_user() or "", "Changed per-node network selection setting")
+            _record_change(db, current_user() or "", "Changed per-node network selection setting",
+                           {"record": "setting", "key": "advanced_node_networks", "value": enabled})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -173,7 +180,9 @@ def create_app(settings: Settings | None = None) -> Flask:
                 db.add(Setting(key="default_network_key", value=network.stable_key))
             else:
                 row.value = network.stable_key
-            _record_change(db, current_user() or "", f"Selected {network.name} as the default network")
+            _record_change(db, current_user() or "", f"Selected {network.name} as the default network",
+                           {"record": "setting", "key": "default_network_key",
+                            "network_key": network.stable_key})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -216,7 +225,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                 db.add(network)
             else:
                 network.name, network.schema_version, network.config = name.strip(), 1, config
-            _record_change(db, current_user() or "", f"Imported network profile {name.strip()}")
+            _record_change(db, current_user() or "", f"Imported network profile {name.strip()}",
+                           {"record": "network", "stable_key": stable_key, "operation": "upsert"})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -242,7 +252,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                                    config_json=json.dumps(config, indent=2), exists=False, source="manual")
         with sessions.begin() as db:
             db.add(Network(stable_key=stable_key, name=name, schema_version=1, config=config))
-            _record_change(db, current_user() or "", f"Added network profile {name}")
+            _record_change(db, current_user() or "", f"Added network profile {name}",
+                           {"record": "network", "stable_key": stable_key, "operation": "create"})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("index"))
@@ -290,13 +301,20 @@ def create_app(settings: Settings | None = None) -> Flask:
             "preserved": sum(len(lines) for lines in preserved.values()),
         }
         if request.form.get("action") == "preview":
+            current = render_database(settings.database).get(filename, b"").decode("utf-8")
+            diff = "\n".join(difflib.unified_diff(
+                _mask_secrets(current).splitlines(), _mask_secrets(content).splitlines(),
+                fromfile=f"current/{filename}", tofile=f"candidate/{filename}", lineterm=""))
             return render_template("editor.html", filename=filename, content=content,
-                                   preview=summary, error=None, can_write=True)
+                                   preview=summary, diff=diff, error=None, can_write=True)
         if request.form.get("action") != "commit" or request.form.get("confirmed") != "yes":
             abort(400, "Preview the changes and confirm the commit")
         with sessions.begin() as db:
             _save_config_file(db, filename, values, preserved)
-            _record_change(db, current_user() or "", f"Updated {filename}")
+            _record_change(db, current_user() or "", f"Updated {filename}",
+                           {"record": "configuration_file", "filename": filename,
+                            "settings_count": summary["settings"],
+                            "preserved_lines_count": summary["preserved"]})
         engine.dispose()
         _regenerate_or_503(settings)
         return redirect(url_for("edit_file", filename=filename))
@@ -390,9 +408,9 @@ def _request_diagnostic(settings: Settings, command: str) -> str:
     return str(response.get("output", ""))
 
 
-def _record_change(db, actor: str, summary: str) -> None:
+def _record_change(db, actor: str, summary: str, details: dict | None = None) -> None:
     latest = db.scalar(select(func.max(Change.revision))) or 0
-    db.add(Change(actor=actor, summary=summary, revision=latest + 1))
+    db.add(Change(actor=actor, summary=summary, revision=latest + 1, details=details or {}))
 
 
 def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
