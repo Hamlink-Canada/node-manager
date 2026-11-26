@@ -1,9 +1,10 @@
+from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.generate import render_database
 from asterisk_node_manager.models import ConfigValue, Node, SimpleUSBSettings
 
 
 def test_generation_renders_typed_node_and_simpleusb_settings(database):
-    sessions = __import__("asterisk_node_manager.database", fromlist=["session_factory"]).session_factory(database)
+    sessions = session_factory(database)
     try:
         with sessions.begin() as session:
             session.add(Node(node_number=4321, name="Test node", rxchannel="SimpleUSB/4321", duplex=0,

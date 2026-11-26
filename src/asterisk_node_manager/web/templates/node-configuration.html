@@ -27,7 +27,7 @@
           <option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option>
         </select>
         {% else %}
-        <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.min }}" max="{{ field.max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+        <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
         {% endif %}
         {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
       </div>
@@ -55,7 +55,7 @@
             {% elif field.kind == 'boolean' %}
             <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}><option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option></select>
             {% else %}
-            <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.min }}" max="{{ field.max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+            <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
             {% endif %}
             {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
           </div>

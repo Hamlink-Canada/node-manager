@@ -27,6 +27,14 @@ The helper does not accept arbitrary command lines or file paths. It stages
 all generated files, preserves existing ownership and mode, and rolls back
 replacements if a write fails. New files use mode 0640 and the asterisk
 group when present. Asterisk reload is not requested.
+The writer reconciles the database to the generated files when it starts, and
+the web service requests a fresh generation before it begins listening. This
+repairs an interrupted file publication or a process restart from the current
+database.
+
+The Docker Compose writer does not mount the host password database. Its PAM
+service can authenticate only accounts available inside its own container.
+Host operating-system accounts are supported by the native systemd deployment.
 
 PAM users can view managed configuration. Only usernames in the root-owned
 writer allowlist can change it or download and restore database backups. Use
@@ -43,8 +51,9 @@ files. The web interface provides the same backup and restore operations.
 Restore validates the SQLite database before replacing the active database.
 Generated files are rendered after restore; if rendering fails, the database
 copy is rolled back. A database transaction and multiple filesystem updates
-cannot be one atomic transaction, so a failed generation is reported and can
-be retried with astnode generate.
+cannot be one atomic transaction. The web request restores the previous
+database when generation fails, and service startup reconciles files from the
+database. Run sudo astnode generate to request reconciliation manually.
 
 ## Configuration import
 

@@ -25,3 +25,21 @@ def test_secret_detection_covers_password_tokens_and_credentials():
     assert is_secret_key("auth-token")
     assert not is_secret_key("callerid")
     assert SECRET_VALUE == "[hidden]"
+
+
+def test_parser_preserves_repeated_directives_inherited_headers_and_inline_comments():
+    values, preserved = parse_config(
+        "extensions.conf",
+        "[internal](base)\nexten => 100,1,Answer()\nsame => n,Hangup()\n",
+    )
+    assert "internal(base)" in values
+    assert values["internal(base)"] == {}
+    assert preserved["internal(base)"] == ["exten => 100,1,Answer()", "same => n,Hangup()"]
+
+    rpt, lines = parse_config("rpt.conf", "[1234]\nhangtime = 2000 ; squelch tail\n")
+    assert rpt["1234"]["hangtime"] == "2000"
+    assert lines["1234"] == ["; squelch tail"]
+
+    iax, directives = parse_config("iax.conf", "[general]\nregister => user:one@host\nregister => user:two@host\n")
+    assert iax["general"] == {}
+    assert directives["general"] == ["register => user:one@host", "register => user:two@host"]

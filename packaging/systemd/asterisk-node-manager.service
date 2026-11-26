@@ -1,6 +1,6 @@
 [Unit]
 Description=Asterisk Node Manager web interface
-After=network.target
+After=network.target asterisk-node-manager-writer.socket
 
 [Service]
 Type=simple
@@ -14,7 +14,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/asterisk-node-manager
-RuntimeDirectory=asterisk-node-manager
 
 [Install]
 WantedBy=multi-user.target

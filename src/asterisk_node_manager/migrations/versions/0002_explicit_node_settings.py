@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from alembic import op
 import sqlalchemy as sa
@@ -28,6 +29,7 @@ SIMPLEUSB_DEFAULTS = {
     "txmixaset": 500,
     "txmixbset": 500,
 }
+SECRET_KEY = re.compile(r"(password|secret|token|credential|auth|api[_-]?key|^register$)", re.I)
 
 NODE_DEFAULTS = {
     "linktolink": False, "linkmongain": 0, "hangtime": 5000, "althangtime": 0,
@@ -86,6 +88,13 @@ def upgrade() -> None:
     for row in bind.execute(sa.select(config_values.c.section, config_values.c.key, config_values.c.value)
                             .where(config_values.c.file_name == "simpleusb.conf")):
         stored_usb.setdefault(row.section, {})[row.key] = row.value
+    for row in bind.execute(sa.select(config_values.c.file_name, config_values.c.section,
+                                      config_values.c.key)).fetchall():
+        if SECRET_KEY.search(row.key):
+            bind.execute(config_values.update().where(
+                config_values.c.file_name == row.file_name,
+                config_values.c.section == row.section,
+                config_values.c.key == row.key).values(secret=True))
     for row in bind.execute(sa.select(config_values.c.section, config_values.c.key, config_values.c.value)
                             .where(config_values.c.file_name == "rpt.conf")):
         stored_rpt.setdefault(row.section, {})[row.key] = row.value
@@ -138,8 +147,14 @@ def upgrade() -> None:
         bind.execute(usb_table.insert().values(**values))
 
         for key, value in raw.items():
-            bind.execute(config_values.insert().values(file_name="rpt.conf", section=str(row.node_number),
-                                                       key=key, value=str(value), secret=False))
+            exists = bind.execute(sa.select(config_values.c.key).where(
+                config_values.c.file_name == "rpt.conf",
+                config_values.c.section == str(row.node_number),
+                config_values.c.key == key)).first()
+            if exists is None:
+                bind.execute(config_values.insert().values(
+                    file_name="rpt.conf", section=str(row.node_number),
+                    key=key, value=str(value), secret=bool(SECRET_KEY.search(key))))
 
     for section in migrated_sections:
         if section.isdigit():
@@ -179,7 +194,7 @@ def downgrade() -> None:
     for row in bind.execute(sa.select(nodes)).fetchall():
         values = {key: getattr(row, key) for key in columns}
         values.update(usb_by_node.get(row.id, {}))
-        bind.execute(nodes.update().where(nodes.c.id == row.id).values(settings=json.dumps(values)))
+        bind.execute(nodes.update().where(nodes.c.id == row.id).values(settings=values))
     op.drop_table("simpleusb_settings")
     op.drop_column("nodes", "duplex")
     op.drop_column("nodes", "rxchannel")

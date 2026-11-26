@@ -13,8 +13,22 @@
     <textarea class="form-control font-monospace config-editor" id="configuration-content" name="content" rows="32" spellcheck="false" {% if not can_write %}readonly{% endif %}>{{ content }}</textarea>
     {% if not can_write %}<div class="form-text">Your account has read-only access.</div>{% endif %}
     {% if can_write %}<div class="d-flex flex-wrap gap-2 mt-3"><button class="btn btn-primary" name="action" value="preview" type="submit">Preview</button>
-      {% if preview %}<input type="hidden" name="confirmed" value="yes"><button class="btn btn-danger" name="action" value="commit" type="submit">Commit and regenerate files</button>{% endif %}
+      {% if preview %}<input type="hidden" name="confirmed" value="yes"><input type="hidden" name="preview_hash" value="{{ preview_hash }}"><button class="btn btn-danger" id="commit-configuration" name="action" value="commit" type="submit">Commit and regenerate files</button>{% endif %}
     </div>{% endif %}
   </form>
 </div></section>
+{% if preview %}<script>
+(() => {
+  const editor = document.getElementById('configuration-content');
+  const commit = document.getElementById('commit-configuration');
+  const confirmation = document.querySelector('input[name="confirmed"]');
+  const hash = document.querySelector('input[name="preview_hash"]');
+  editor.addEventListener('input', () => {
+    commit.disabled = true;
+    confirmation.disabled = true;
+    hash.disabled = true;
+    commit.title = 'Preview the edited text again before committing.';
+  });
+})();
+</script>{% endif %}
 {% endblock %}

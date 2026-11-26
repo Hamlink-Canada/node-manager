@@ -48,10 +48,9 @@ generated files to `./asterisk-config` by default. Start it with:
 
     docker compose up --build
 
-The Compose writer validates host local accounts through the packaged PAM
-service and mounts the host's `/etc/passwd` and `/etc/shadow` read-only. The
-writer container must be trusted with host password hashes. The Debian systemd
-deployment uses the host PAM service directly.
+The Compose writer does not mount the host password database. PAM can
+authenticate only accounts available inside the writer container; host
+operating-system accounts are supported by the native systemd deployment.
 Grant web write access by adding authorized usernames to `docker/writers` or
 running `docker compose exec web astnode writers add USERNAME`.
 

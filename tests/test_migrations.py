@@ -51,9 +51,11 @@ def test_migration_moves_legacy_settings_into_typed_columns(tmp_path):
                                 "VALUES (1234, 'Imported node', NULL, 1, :settings)"),
                            {"settings": json.dumps({"rxchannel": "SimpleUSB/1234", "duplex": "0",
                                                     "hangtime": "2345", "linktolink": "yes",
-                                                    "oldcustom": "retained"})})
+                                                    "oldcustom": "legacy", "custompassword": "keep-me"})})
         connection.execute(text("INSERT INTO config_values (file_name, section, key, value, secret) "
                                 "VALUES ('simpleusb.conf', '1234', 'rxmixerset', '612', 0)"))
+        connection.execute(text("INSERT INTO config_values (file_name, section, key, value, secret) "
+                                "VALUES ('rpt.conf', '1234', 'oldcustom', 'existing', 0)"))
     engine.dispose()
 
     upgrade_database(database)
@@ -71,6 +73,11 @@ def test_migration_moves_legacy_settings_into_typed_columns(tmp_path):
             retained = session.execute(text(
                 "SELECT value FROM config_values WHERE file_name='rpt.conf' AND key='oldcustom'"
             )).scalar_one()
-            assert retained == "retained"
+            assert retained == "existing"
+            secret, secret_flag = session.execute(text(
+                "SELECT value, secret FROM config_values WHERE file_name='rpt.conf' AND key='custompassword'"
+            )).one()
+            assert secret == "keep-me"
+            assert secret_flag is True or secret_flag == 1
     finally:
         sessions.kw["bind"].dispose()

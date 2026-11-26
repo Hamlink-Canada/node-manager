@@ -28,7 +28,8 @@ def handle_request(request: bytes, settings) -> dict:
         payload = json.loads(request.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return {"ok": False, "error": "invalid JSON request"}
-    if not isinstance(payload, dict) or payload.get("operation") not in ALLOWED_OPERATIONS:
+    if (not isinstance(payload, dict) or not isinstance(payload.get("operation"), str)
+            or payload.get("operation") not in ALLOWED_OPERATIONS):
         return {"ok": False, "error": "unsupported operation"}
     if payload["operation"] == "authenticate":
         username, password = payload.get("username"), payload.get("password")
@@ -48,7 +49,7 @@ def handle_request(request: bytes, settings) -> dict:
         return {"ok": False, "error": "invalid revision"}
     if payload["operation"] == "diagnostic":
         command = payload.get("command")
-        if command not in DIAGNOSTIC_COMMANDS:
+        if not isinstance(command, str) or command not in DIAGNOSTIC_COMMANDS:
             return {"ok": False, "error": "diagnostic command is not allowed"}
         try:
             result = subprocess.run([str(settings.asterisk_cli), "-rx", command],
@@ -123,12 +124,20 @@ def main() -> int:
     settings = load_settings()
     server, owns_socket_path = _open_server_socket(settings)
     try:
+        # Reconcile interrupted publication before serving clients when a database exists.
+        if settings.database.is_file():
+            _replace_files(settings.asterisk_directory, render_database(settings.database))
         while True:
             connection, _ = server.accept()
             with connection:
-                request = connection.recv(65536)
-                response = handle_request(request, settings)
-                connection.sendall(json.dumps(response).encode("utf-8"))
+                try:
+                    connection.settimeout(10)
+                    request = _read_request(connection)
+                    response = handle_request(request, settings)
+                    connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
+                except (OSError, ValueError, TypeError):
+                    # One malformed or abandoned client must not stop the listener.
+                    continue
     finally:
         server.close()
         if owns_socket_path:
@@ -164,6 +173,22 @@ def _open_server_socket(settings):
         socket_path.unlink(missing_ok=True)
         raise
     return server, True
+
+
+def _read_request(connection: socket.socket) -> bytes:
+    chunks = bytearray()
+    while True:
+        chunk = connection.recv(16384)
+        if not chunk:
+            break
+        chunks.extend(chunk)
+        if len(chunks) > 1_048_576:
+            raise ValueError("request exceeds the 1 MiB limit")
+        if b"\n" in chunk:
+            break
+    if not chunks:
+        raise ValueError("empty request")
+    return bytes(chunks).split(b"\n", 1)[0]
 
 
 if __name__ == "__main__":

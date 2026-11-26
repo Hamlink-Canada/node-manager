@@ -87,6 +87,12 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
         key = definition["key"]
         value = str(settings.get(key, definition["default"]))
         kind = definition["kind"]
+        existing_number = None
+        if kind == "number":
+            try:
+                existing_number = int(value)
+            except ValueError:
+                pass
         if kind == "channel":
             channel_choices = [
                 ("Local/pseudo", _message("channel_local", locale, catalog, english)),
@@ -111,6 +117,8 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
             "value": value,
             "choices": choices,
             "advanced": advanced,
+            "browser_max": max(definition.get("max", 0), existing_number) if existing_number is not None else definition.get("max"),
+            "browser_min": min(definition.get("min", 0), existing_number) if existing_number is not None else definition.get("min"),
         })
     return groups
 

@@ -6,9 +6,12 @@ import os
 import re
 import json
 import difflib
-import shutil
 import socket
 import tempfile
+import threading
+import hashlib
+import sqlite3
+from urllib.parse import urlsplit
 from functools import wraps
 from pathlib import Path
 
@@ -18,7 +21,7 @@ from sqlalchemy import func, select
 from waitress import serve
 
 from .config import Settings, load_settings
-from .database import session_factory
+from .database import session_factory, sqlite_snapshot
 from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings
@@ -40,6 +43,8 @@ from .configuration import (
 def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
     if settings.demo_mode:
+        if settings.database.resolve() == Settings.database.resolve():
+            raise ValueError("Demo mode must use a separate database path")
         initialize_demo(settings.database)
         _request_generation(settings)
     app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
@@ -54,6 +59,61 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
     engine = sessions.kw["bind"]
+    write_lock = threading.RLock()
+
+    @app.before_request
+    def protect_mutations_and_serialize_writes():
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("Origin")
+            referer = request.headers.get("Referer")
+            source = origin or referer
+            if not source and not app.testing:
+                abort(400, "A same-origin request is required")
+            if source:
+                parsed = urlsplit(source)
+                if parsed.netloc != request.host or parsed.scheme != request.scheme:
+                    abort(400, "Cross-origin requests are not allowed")
+            write_lock.acquire()
+            request.environ["node_manager_write_lock"] = True
+            if current_user() in writers():
+                existed = settings.database.is_file()
+                request.environ["node_manager_prewrite_database"] = (
+                    _sqlite_snapshot(settings.database) if existed else None, existed)
+
+    @app.teardown_request
+    def release_write_lock(_error=None):
+        if request.environ.pop("node_manager_write_lock", False):
+            write_lock.release()
+
+    @app.after_request
+    def recover_failed_write(response):
+        state = request.environ.pop("node_manager_prewrite_database", None)
+        if state is None:
+            return response
+        snapshot, existed = state
+        try:
+            if response.status_code >= 500:
+                engine.dispose()
+                if existed and snapshot is not None:
+                    current = settings.database.stat() if settings.database.exists() else None
+                    if current is not None:
+                        os.chmod(snapshot, current.st_mode & 0o777)
+                        try:
+                            os.chown(snapshot, current.st_uid, current.st_gid)
+                        except PermissionError:
+                            pass
+                    os.replace(snapshot, settings.database)
+                else:
+                    settings.database.unlink(missing_ok=True)
+                engine.dispose()
+                try:
+                    _request_generation(settings)
+                except Exception:
+                    app.logger.exception("Failed to restore generated files after a rolled-back request")
+        finally:
+            if snapshot is not None:
+                snapshot.unlink(missing_ok=True)
+        return response
 
     def current_user() -> str | None:
         return session.get("username")
@@ -96,17 +156,18 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.post("/login")
     def login_post():
+        next_url = _safe_local_redirect(request.args.get("next"))
         if settings.demo_mode:
             session.clear()
             session["username"] = DEMO_USERNAME
-            return redirect(request.args.get("next") or url_for("index"))
+            return redirect(next_url or url_for("index"))
         username = request.form.get("username", "")
         password = request.form.get("password", "")
         if not username or not password or not _request_authentication(settings, username, password):
             return render_template("login.html", error="Login failed"), 401
         session.clear()
         session["username"] = username
-        return redirect(request.args.get("next") or url_for("index"))
+        return redirect(next_url or url_for("index"))
 
     @app.post("/logout")
     def logout():
@@ -120,10 +181,13 @@ def create_app(settings: Settings | None = None) -> Flask:
             node_count = db.query(func.count(Node.id)).scalar()
             networks = db.query(Network).order_by(Network.name).all()
             nodes = db.query(Node).order_by(Node.node_number).all()
+            node_network_names = {node.id: (node.network.name if node.network else "Default network")
+                                  for node in nodes}
             values = {row.key: row.value for row in db.scalars(select(Setting))}
             changes = db.scalars(select(Change).order_by(Change.revision.desc()).limit(20)).all()
         return render_template("index.html", node_count=node_count, networks=networks,
                                nodes=nodes, username=current_user(),
+                               node_network_names=node_network_names,
                                default_network=values.get("default_network_key", ""),
                                advanced_networks=values.get("advanced_node_networks") == "true",
                                changes=changes)
@@ -142,7 +206,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         if request.method == "POST":
             try:
                 node_number = int(values["node_number"])
-                if node_number < 1:
+                if not 1 <= node_number <= 2**63 - 1:
                     raise ValueError
             except ValueError:
                 errors["node_number"] = "Enter a positive whole number."
@@ -201,7 +265,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         except ValueError:
             abort(400, "Node Number must be an integer")
         name = request.form.get("name", "").strip()
-        if node_number < 1 or not name or len(name) > 200:
+        if not 1 <= node_number <= 2**63 - 1 or not name or len(name) > 200:
             abort(400, "Provide a positive Node Number and a name")
         with sessions() as db:
             if db.scalar(select(Node.id).where(Node.node_number == node_number)) is not None:
@@ -226,11 +290,12 @@ def create_app(settings: Settings | None = None) -> Flask:
             for value in db.scalars(select(ConfigValue).where(
                     ConfigValue.file_name == "rpt.conf",
                     ConfigValue.section == str(node_number))).all():
-                existing[value.key] = value.value
+                if value.key not in NODE_CONFIG_FIELDS:
+                    existing[value.key] = value.value
             if node.simpleusb_settings:
                 for key in node_fields_for_file("simpleusb.conf"):
                     value = getattr(node.simpleusb_settings, key)
-                    existing[key] = str(value).lower() if isinstance(value, bool) else str(value)
+                    existing[key] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
             simpleusb_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "simpleusb.conf",
                 ConfigValue.section == str(node_number))).all()
@@ -297,6 +362,9 @@ def create_app(settings: Settings | None = None) -> Flask:
                 abort(404)
             db.delete(node)
             node_number = node.node_number
+            for file_name in GENERATED_FILES:
+                db.query(ConfigValue).filter_by(file_name=file_name, section=str(node_number)).delete()
+                db.query(CustomLine).filter_by(file_name=file_name, section=str(node_number)).delete()
             _record_change(db, current_user() or "", f"Removed node {node_number}",
                            {"record": "node", "node_number": node_number, "operation": "delete"})
         engine.dispose()
@@ -332,7 +400,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.post("/settings/network-selection")
     @write_required
     def network_selection():
-        enabled = "enabled" if request.form.get("enabled") == "true" else "false"
+        enabled = "true" if request.form.get("enabled") == "true" else "false"
         with sessions.begin() as db:
             row = db.get(Setting, "advanced_node_networks")
             if row is None:
@@ -384,7 +452,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                 abort(400, "Network file must contain valid UTF-8 JSON")
         if (not isinstance(profile, dict)
                 or set(profile) != {"schema_version", "key", "name", "config"}
-                or type(profile.get("schema_version")) is not int
+                or isinstance(profile.get("schema_version"), bool)
+                or not isinstance(profile.get("schema_version"), (int, float))
                 or profile.get("schema_version") != 1):
             abort(400, "Unsupported network profile schema")
         stable_key, name, config = profile.get("key"), profile.get("name"), profile.get("config")
@@ -485,9 +554,13 @@ def create_app(settings: Settings | None = None) -> Flask:
             diff = "\n".join(difflib.unified_diff(
                 _mask_secrets(current).splitlines(), _mask_secrets(content).splitlines(),
                 fromfile=f"current/{filename}", tofile=f"candidate/{filename}", lineterm=""))
+            preview_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             return render_template("editor.html", filename=filename, content=content,
-                                   preview=summary, diff=diff, error=None, can_write=True)
-        if request.form.get("action") != "commit" or request.form.get("confirmed") != "yes":
+                                   preview=summary, diff=diff, preview_hash=preview_hash,
+                                   error=None, can_write=True)
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if (request.form.get("action") != "commit" or request.form.get("confirmed") != "yes"
+                or request.form.get("preview_hash") != content_hash):
             abort(400, "Preview the changes and confirm the commit")
         with sessions.begin() as db:
             _save_config_file(db, filename, values, preserved)
@@ -504,8 +577,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     def backup():
         if not settings.database.is_file():
             abort(404)
-        return send_file(settings.database, as_attachment=True,
-                         download_name="asterisk-node-manager.sqlite3", mimetype="application/vnd.sqlite3")
+        snapshot = _sqlite_snapshot(settings.database)
+        response = send_file(snapshot, as_attachment=True,
+                             download_name="asterisk-node-manager.sqlite3", mimetype="application/vnd.sqlite3")
+        response.call_on_close(lambda: snapshot.unlink(missing_ok=True))
+        return response
 
     @app.post("/restore")
     @write_required
@@ -517,9 +593,8 @@ def create_app(settings: Settings | None = None) -> Flask:
         with tempfile.NamedTemporaryFile(dir=settings.database.parent, delete=False) as temp:
             temp_path = Path(temp.name)
             uploaded.save(temp)
-        previous = settings.database.with_suffix(settings.database.suffix + ".restore-previous")
+        previous = _sqlite_snapshot(settings.database) if settings.database.exists() else None
         try:
-            import sqlite3
             try:
                 with sqlite3.connect(f"file:{temp_path}?mode=ro", uri=True) as conn:
                     check = conn.execute("PRAGMA integrity_check").fetchone()
@@ -528,15 +603,20 @@ def create_app(settings: Settings | None = None) -> Flask:
                         abort(400, "Backup is missing migration metadata")
             except sqlite3.Error:
                 abort(400, "Backup is not a valid Asterisk Node Manager database")
-            if settings.database.exists():
-                shutil.copy2(settings.database, previous)
+            if previous is not None:
+                current_stat = settings.database.stat()
+                os.chmod(temp_path, current_stat.st_mode & 0o777)
+                try:
+                    os.chown(temp_path, current_stat.st_uid, current_stat.st_gid)
+                except PermissionError:
+                    pass
             os.replace(temp_path, settings.database)
             engine.dispose()
             try:
                 upgrade_database(settings.database)
                 _request_generation(settings)
             except Exception:
-                if previous.exists():
+                if previous is not None and previous.exists():
                     os.replace(previous, settings.database)
                 else:
                     settings.database.unlink(missing_ok=True)
@@ -544,7 +624,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                 raise
         finally:
             temp_path.unlink(missing_ok=True)
-            previous.unlink(missing_ok=True)
+            if previous is not None:
+                previous.unlink(missing_ok=True)
         return redirect(url_for("index"))
 
     @app.get("/health")
@@ -562,8 +643,8 @@ def _request_generation(settings: Settings) -> None:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(30)
         client.connect(str(settings.writer_socket))
-        client.sendall(request_data)
-        response = json.loads(client.recv(65536).decode("utf-8"))
+        client.sendall(request_data + b"\n")
+        response = _read_writer_response(client)
     if not response.get("ok"):
         raise OSError(response.get("error", "configuration generation failed"))
 
@@ -576,8 +657,8 @@ def _request_authentication(settings: Settings, username: str, password: str) ->
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(15)
         client.connect(str(settings.writer_socket))
-        client.sendall(request_data)
-        response = json.loads(client.recv(65536).decode("utf-8"))
+        client.sendall(request_data + b"\n")
+        response = _read_writer_response(client)
     return bool(response.get("authenticated"))
 
 
@@ -588,8 +669,8 @@ def _request_diagnostic(settings: Settings, command: str) -> str:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(15)
         client.connect(str(settings.writer_socket))
-        client.sendall(request_data)
-        response = json.loads(client.recv(65536).decode("utf-8"))
+        client.sendall(request_data + b"\n")
+        response = _read_writer_response(client)
     if not response.get("ok"):
         raise OSError(response.get("error", "Asterisk diagnostic failed"))
     return str(response.get("output", ""))
@@ -609,14 +690,70 @@ def _demo_diagnostic(command: str) -> str:
 
 def _write_demo_files(directory: Path, files: dict[str, bytes]) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    for name, content in files.items():
-        if Path(name).name != name:
-            raise ValueError("unsafe generated filename")
-        with tempfile.NamedTemporaryFile(dir=directory, prefix=f".{name}.", delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(content)
-        temporary.chmod(0o644)
-        os.replace(temporary, directory / name)
+    originals: dict[str, bytes | None] = {}
+    staged: dict[str, Path] = {}
+    try:
+        for name, content in files.items():
+            if Path(name).name != name:
+                raise ValueError("unsafe generated filename")
+            target = directory / name
+            originals[name] = target.read_bytes() if target.exists() else None
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=f".{name}.", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(0o644)
+            staged[name] = temporary
+        for name, temporary in staged.items():
+            os.replace(temporary, directory / name)
+    except Exception:
+        for name, original in originals.items():
+            target = directory / name
+            if original is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(original)
+        raise
+    finally:
+        for temporary in staged.values():
+            temporary.unlink(missing_ok=True)
+
+
+def _safe_local_redirect(target: str | None) -> str | None:
+    if not target:
+        return None
+    parsed = urlsplit(target)
+    if (parsed.scheme or parsed.netloc or not target.startswith("/") or target.startswith("//")
+            or "\\" in target or any(ord(char) < 32 for char in target)):
+        return None
+    return target
+
+
+def _read_writer_response(client: socket.socket) -> dict:
+    chunks = bytearray()
+    try:
+        while True:
+            chunk = client.recv(16384)
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            if len(chunks) > 1_048_576:
+                raise OSError("writer response exceeds the 1 MiB limit")
+        if not chunks:
+            raise OSError("writer closed the connection without a response")
+        response = json.loads(chunks.decode("utf-8"))
+        if not isinstance(response, dict):
+            raise OSError("writer returned a non-object response")
+        return response
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if isinstance(exc, OSError):
+            raise
+        raise OSError("invalid or incomplete response from writer") from exc
+
+
+def _sqlite_snapshot(database: Path) -> Path:
+    return sqlite_snapshot(database)
 
 
 def _record_change(db, actor: str, summary: str, details: dict | None = None) -> None:
@@ -627,6 +764,10 @@ def _record_change(db, actor: str, summary: str, details: dict | None = None) ->
 def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
     prior_values = {(row.section, row.key): row for row in
                     db.scalars(select(ConfigValue).where(ConfigValue.file_name == filename))}
+    prior_custom = {}
+    for row in db.scalars(select(CustomLine).where(CustomLine.file_name == filename)
+                          .order_by(CustomLine.section, CustomLine.line_number)):
+        prior_custom.setdefault(row.section, []).append(row.content)
     db.query(ConfigValue).filter_by(file_name=filename).delete()
     db.query(CustomLine).filter_by(file_name=filename).delete()
     if filename == "rpt.conf":
@@ -693,16 +834,22 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                                    secret=is_secret_key(key)))
     for section, lines in preserved.items():
         for index, line in enumerate(lines):
+            if re.match(r"^\s*register\s*=>\s*\[hidden\]\s*$", line, re.IGNORECASE):
+                previous_lines = prior_custom.get(section, [])
+                if index < len(previous_lines) and re.match(
+                        r"^\s*register\s*=>", previous_lines[index], re.IGNORECASE):
+                    line = previous_lines[index]
             db.add(CustomLine(file_name=filename, section=section, line_number=index, content=line))
 
 
 def _mask_secrets(text: str) -> str:
     masked = []
     for line in text.splitlines():
-        if "=" in line and not line.lstrip().startswith((";", "#")):
-            key, value = line.split("=", 1)
+        match = re.match(r"^(\s*)(.*?)\s*(=>|=)\s*(.*)$", line)
+        if match and not line.lstrip().startswith((";", "#")):
+            indent, key, separator, value = match.groups()
             if is_secret_key(key.strip()) and value.strip():
-                line = f"{key} = {SECRET_VALUE}"
+                line = f"{indent}{key} {separator} {SECRET_VALUE}"
         masked.append(line)
     return "\n".join(masked) + ("\n" if text.endswith("\n") else "")
 
@@ -711,7 +858,7 @@ def _regenerate_or_503(settings: Settings) -> None:
     try:
         _request_generation(settings)
     except OSError as exc:
-        abort(503, f"Database change was saved, but file generation failed: {exc}")
+        abort(503, f"Configuration change was rolled back because file generation failed: {exc}. Retry the change or run `astnode generate` as root after resolving the writer error.")
 
 
 def _read_secret(path: Path, demo_mode: bool = False) -> str:
@@ -730,7 +877,10 @@ def _read_secret(path: Path, demo_mode: bool = False) -> str:
 
 def main() -> int:
     settings = load_settings()
-    serve(create_app(settings), host=settings.listen_address, port=settings.port)
+    app = create_app(settings)
+    if not settings.demo_mode:
+        _request_generation(settings)
+    serve(app, host=settings.listen_address, port=settings.port)
     return 0
 
 

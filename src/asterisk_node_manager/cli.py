@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 import grp
-import shutil
+import sqlite3
+import tempfile
 import sys
 from pathlib import Path
 
 from .config import load_settings
-from .database import session_factory
+from .database import session_factory, sqlite_snapshot
 from .asterisk_config import is_secret_key, parse_config
 from .migrate import upgrade_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings
@@ -64,7 +65,8 @@ def main() -> int:
             print("Database is not initialized", file=sys.stderr)
             return 2
         args.path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(settings.database, args.path)
+        snapshot = sqlite_snapshot(settings.database, args.path.parent)
+        os.replace(snapshot, args.path)
         print(f"Backup written to {args.path}")
         return 0
     if args.command == "restore":
@@ -73,23 +75,33 @@ def main() -> int:
             print(f"Backup file not found: {args.path}", file=sys.stderr)
             return 2
         settings.database.parent.mkdir(parents=True, exist_ok=True)
-        previous = settings.database.with_suffix(settings.database.suffix + ".restore-previous")
-        if settings.database.exists():
-            shutil.copy2(settings.database, previous)
+        previous = sqlite_snapshot(settings.database) if settings.database.exists() else None
+        fd, temp_name = tempfile.mkstemp(prefix=".node-manager-restore-", suffix=".sqlite3",
+                                         dir=settings.database.parent)
+        os.close(fd)
+        restored = Path(temp_name)
         try:
-            shutil.copy2(args.path, settings.database)
+            with sqlite3.connect(args.path) as source, sqlite3.connect(restored) as target:
+                source.backup(target)
+            if previous is not None:
+                current_stat = settings.database.stat()
+                os.chmod(restored, current_stat.st_mode & 0o777)
+                os.chown(restored, current_stat.st_uid, current_stat.st_gid)
+            os.replace(restored, settings.database)
             upgrade_database(settings.database)
             from .generate import render_database
             from .writer import _replace_files
             _replace_files(settings.asterisk_directory, render_database(settings.database))
         except Exception:
-            if previous.exists():
+            if previous is not None and previous.exists():
                 os.replace(previous, settings.database)
             else:
                 settings.database.unlink(missing_ok=True)
             raise
         finally:
-            previous.unlink(missing_ok=True)
+            if previous is not None:
+                previous.unlink(missing_ok=True)
+            restored.unlink(missing_ok=True)
         print(f"Database restored from {args.path} and configuration regenerated")
         return 0
     if args.command == "writers":

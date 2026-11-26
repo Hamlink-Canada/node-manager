@@ -31,9 +31,10 @@ jobs:
         env:
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          branch_slug=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[.-]+//; s/[.-]+$//' | cut -c1-60)
+          branch_slug=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[.-]+//; s/[.-]+$//' | cut -c1-48)
           branch_slug=${branch_slug:-branch}
-          branch_tag="dev-$branch_slug"
+          branch_hash=$(printf '%s' "$BRANCH_NAME" | sha256sum | cut -c1-12)
+          branch_tag="dev-$branch_slug-$branch_hash"
           image=ghcr.io/hamlink-canada/node-manager
           {
             echo 'tags<<EOF'
@@ -52,23 +53,3 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           provenance: true
-      - name: Clean up superseded image tags for this branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH_TAG: ${{ steps.tags.outputs.branch_tag }}
-          PACKAGE_NAME: node-manager
-        run: |
-          version_ids=$(gh api --paginate --jq '
-            .[]
-            | select(any(.metadata.container.tags[]?; startswith(env.BRANCH_TAG + "-")))
-            | select(all(.metadata.container.tags[]?; . != env.BRANCH_TAG))
-            | .id
-          ' "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100")
-          if [ -z "$version_ids" ]; then
-            echo "No legacy image versions found for $BRANCH_TAG"
-            exit 0
-          fi
-          while IFS= read -r version_id; do
-            [ -n "$version_id" ] || continue
-            gh api --method DELETE "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions/$version_id"
-          done <<< "$version_ids"

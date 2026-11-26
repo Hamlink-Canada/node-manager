@@ -19,7 +19,8 @@ def test_configuration_groups_put_basic_radio_and_tuning_in_default_view():
 
 def test_configuration_hides_simpleusb_fields_when_another_channel_is_selected():
     groups = node_field_groups(1234, {"rxchannel": "Local/pseudo"})
-    assert "simpleusb" not in {field["key"] for group in groups for field in group["fields"]}
+    assert not any(field.get("file") == "simpleusb.conf"
+                   for group in groups for field in group["fields"])
 
 
 def test_validation_rejects_invalid_numeric_values_and_normalizes_valid_values():
@@ -44,3 +45,10 @@ def test_typed_node_mapping_round_trips_booleans_and_numbers():
     assert node.hangtime == 3000
     assert values["linktolink"] == "yes"
     assert values["duplex"] == "3"
+
+
+def test_unchanged_legacy_numbers_remain_valid_for_unrelated_edits():
+    existing = {"rxchannel": "Local/pseudo", "duplex": "2", "hangtime": "10000000"}
+    values, errors = validate_node_settings({"hangtime": "10000000", "duplex": "0"}, 1234, existing)
+    assert errors == {}
+    assert values["hangtime"] == "10000000"

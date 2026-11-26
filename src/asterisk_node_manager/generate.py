@@ -41,7 +41,8 @@ def render_database(database: str | Path) -> dict[str, bytes]:
         for node in nodes:
             network = node.network if advanced_networks and node.network else default_network
             advanced = {value.key: value.value for value in file_values
-                        if value.file_name == "rpt.conf" and value.section == str(node.node_number)}
+                        if value.file_name == "rpt.conf" and value.section == str(node.node_number)
+                        and value.key not in node_config_values(node)}
             rpt_settings = {**node_config_values(node), **advanced}
             nodes_context.append({
                 "node_number": node.node_number, "name": node.name,
@@ -75,7 +76,8 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                     values.extend(usb_values)
                     values.sort(key=lambda value: (value.section, value.key))
                 content = templates.get_template("generic.conf.j2").render(
-                    filename=filename, values=values, custom_lines=custom)
+                    filename=filename, values=values, custom_lines=custom,
+                    sections=sorted({row.section for row in values + custom}))
             output[filename] = content.encode("utf-8")
     return output
 

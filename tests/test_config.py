@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from asterisk_node_manager.config import load_settings
 
@@ -17,3 +18,12 @@ def test_settings_load_toml_and_environment_overrides(monkeypatch, tmp_path):
     assert settings.listen_address == "0.0.0.0"
     assert settings.port == 9876
     assert settings.demo_mode is True
+
+
+def test_explicit_missing_config_is_an_error(monkeypatch, tmp_path):
+    missing = tmp_path / "missing.toml"
+    with pytest.raises(FileNotFoundError, match="Configuration file not found"):
+        load_settings(missing)
+    monkeypatch.setenv("ASTNODE_CONFIG", str(missing))
+    with pytest.raises(FileNotFoundError, match="Configuration file not found"):
+        load_settings()

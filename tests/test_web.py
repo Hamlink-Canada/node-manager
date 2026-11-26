@@ -1,10 +1,12 @@
 from io import BytesIO
+import hashlib
 import json
+import pytest
 
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import ConfigValue, Network, Node
+from asterisk_node_manager.models import ConfigValue, CustomLine, Network, Node, Setting
 from asterisk_node_manager.web import create_app
 
 
@@ -35,6 +37,7 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         generated_rpt = (settings.demo_output_directory / "rpt.conf").read_text()
         assert "linktolink = yes" in generated_rpt
         assert "duplex = 0" in generated_rpt
+        assert "rxboost = no" in (settings.demo_output_directory / "simpleusb.conf").read_text()
     finally:
         sessions.kw["bind"].dispose()
 
@@ -56,6 +59,7 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     assert client.get("/nodes/setup").status_code == 403
     assert client.post("/nodes", data={"node_number": "1200", "name": "Unauthorized"}).status_code == 403
     assert client.get("/backup").status_code == 403
+    assert b"Download backup" not in client.get("/").data
 
 
 def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path):
@@ -145,7 +149,7 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     client = app.test_client()
     client.post("/login")
 
-    profile = {"schema_version": 1, "key": "example.net", "name": "Example network",
+    profile = {"schema_version": 1.0, "key": "example.net", "name": "Example network",
                "config": {"register": True, "server": "example.invalid"}}
     preview = client.post("/networks/import", data={
         "network": (BytesIO(json.dumps(profile).encode()), "example.json")
@@ -221,6 +225,7 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
     assert preview.status_code == 200
     committed = client.post("/files/simpleusb.conf", data={
         "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
     })
     assert committed.status_code == 302
 
@@ -234,3 +239,109 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
             assert custom.value == "kept"
     finally:
         sessions.kw["bind"].dispose()
+
+
+def test_editor_rejects_text_that_differs_from_preview(tmp_path):
+    settings = Settings(database=tmp_path / "editor-stale.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    response = client.post("/files/rpt.conf", data={
+        "action": "commit", "confirmed": "yes", "preview_hash": "hash-of-earlier-text",
+        "content": "[1000]\nhangtime=1234\n",
+    })
+    assert response.status_code == 400
+
+
+def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
+    settings = Settings(database=tmp_path / "iax-secret.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    try:
+        with sessions.begin() as session:
+            session.add(CustomLine(file_name="iax.conf", section="general", line_number=0,
+                                   content="register => demo:secret@host.invalid"))
+        sessions.kw["bind"].dispose()
+        page = client.get("/files/iax.conf")
+        assert b"register => [hidden]" in page.data
+        assert b"secret@host.invalid" not in page.data
+        content = "[general]\nregister => [hidden]\n"
+        preview = client.post("/files/iax.conf", data={"action": "preview", "content": content})
+        assert preview.status_code == 200
+        saved = client.post("/files/iax.conf", data={
+            "action": "commit", "confirmed": "yes", "content": content,
+            "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+        })
+        assert saved.status_code == 302
+        generated = (settings.demo_output_directory / "iax.conf").read_text()
+        assert "register => demo:secret@host.invalid" in generated
+    finally:
+        sessions.kw["bind"].dispose()
+
+
+def test_login_ignores_external_redirect_and_rejects_oversized_node_number(tmp_path):
+    settings = Settings(database=tmp_path / "redirect.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    login = client.post("/login?next=https://example.invalid/", follow_redirects=False)
+    assert login.headers["Location"].endswith("/")
+    response = client.post("/nodes", data={"node_number": "9223372036854775808", "name": "Too large"})
+    assert response.status_code == 400
+
+
+def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tmp_path):
+    settings = Settings(database=tmp_path / "network-selection.sqlite3", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    enabled = client.post("/settings/network-selection", data={"enabled": "true"})
+    assert enabled.status_code == 302
+    assert b"Per-node network selection" in client.get("/").data
+
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            assert session.get(Setting, "advanced_node_networks").value == "true"
+        with sessions.begin() as session:
+            session.add(Node(node_number=9044, name="Read-only target"))
+        sessions.kw["bind"].dispose()
+        with client.session_transaction() as browser_session:
+            browser_session["username"] = "reader"
+        page = client.get("/")
+        assert page.status_code == 200
+        assert b"Read-only target" in page.data
+        assert b"Download backup" not in page.data
+        assert b"assign_network" not in page.data
+    finally:
+        sessions.kw["bind"].dispose()
+
+
+def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exist(monkeypatch, tmp_path):
+    from asterisk_node_manager.config import load_settings
+    monkeypatch.setenv("ASTNODE_DEMO", "yes")
+    monkeypatch.delenv("ASTNODE_DATABASE", raising=False)
+    monkeypatch.delenv("ASTNODE_CONFIG", raising=False)
+    settings = load_settings()
+    assert settings.demo_mode is True
+    assert settings.database.name == "demo.sqlite3"
+
+    from asterisk_node_manager.config import Settings
+    try:
+        create_app(Settings(demo_mode=True, secret_key_file=tmp_path / "missing-secret"))
+    except ValueError as exc:
+        assert "separate database" in str(exc)
+    else:
+        raise AssertionError("demo mode accepted the production database path")
+
+    with pytest.raises(FileNotFoundError):
+        load_settings(tmp_path / "missing-explicit-config.toml")

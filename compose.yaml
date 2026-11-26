@@ -30,8 +30,7 @@ services:
     volumes:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
-      - /etc/passwd:/etc/passwd:ro
-      - /etc/shadow:/etc/shadow:ro
+      - /var/run/asterisk:/var/run/asterisk
       - ${ASTERISK_CONFIG_DIRECTORY:-./asterisk-config}:/etc/asterisk
     healthcheck:
       test: ["CMD", "python", "-c", "from pathlib import Path; import sys; sys.exit(0 if Path('/run/asterisk-node-manager/writer.sock').is_socket() else 1)"]

@@ -24,15 +24,27 @@ class Settings:
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
+    explicit_config = path is not None or "ASTNODE_CONFIG" in os.environ
     config_path = Path(path or os.environ.get("ASTNODE_CONFIG", "node-manager.toml"))
+    if explicit_config and not config_path.is_file():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
     raw = {}
     if config_path.exists():
         with config_path.open("rb") as stream:
             raw = tomllib.load(stream)
     paths = raw.get("paths", {})
     web = raw.get("web", {})
+    demo_mode = os.environ.get("ASTNODE_DEMO", str(web.get("demo_mode", "false"))).lower() in {
+        "1", "true", "yes", "on"}
+    database_default = paths.get("database", Settings.database)
+    if demo_mode and "database" not in paths and "ASTNODE_DATABASE" not in os.environ:
+        database_default = Path("/var/lib/asterisk-node-manager/demo.sqlite3")
+    database = Path(os.environ.get("ASTNODE_DATABASE", database_default))
+    production_database = Path(paths.get("database", Settings.database)).resolve()
+    if demo_mode and database.resolve() == production_database:
+        raise ValueError("Demo mode must use a separate database path")
     return Settings(
-        database=Path(os.environ.get("ASTNODE_DATABASE", paths.get("database", Settings.database))),
+        database=database,
         asterisk_directory=Path(os.environ.get(
             "ASTNODE_ASTERISK_DIRECTORY", paths.get("asterisk_directory", Settings.asterisk_directory))),
         writer_socket=Path(os.environ.get(
@@ -45,8 +57,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         pam_service=str(os.environ.get("ASTNODE_PAM_SERVICE", web.get("pam_service", "asterisk-node-manager"))),
         secret_key_file=Path(os.environ.get(
             "ASTNODE_SECRET_KEY_FILE", web.get("secret_key_file", Settings.secret_key_file))),
-        demo_mode=os.environ.get("ASTNODE_DEMO", str(web.get("demo_mode", "false"))).lower()
-        in {"1", "true", "yes", "on"},
+        demo_mode=demo_mode,
         demo_output_directory=Path(os.environ.get(
             "ASTNODE_DEMO_OUTPUT_DIRECTORY", paths.get("demo_output_directory",
                 "/tmp/asterisk-node-manager-demo"))),
