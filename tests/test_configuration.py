@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 from asterisk_node_manager.configuration import (
     apply_node_config_values,
     node_config_values,

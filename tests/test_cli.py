@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 from asterisk_node_manager import cli
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory

@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Render a database revision into a fixed set of Asterisk configuration files."""
 
 from __future__ import annotations

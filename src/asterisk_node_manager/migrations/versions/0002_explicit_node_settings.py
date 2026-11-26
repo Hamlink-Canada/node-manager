@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Normalize common node and SimpleUSB settings into typed database fields."""
 
 from __future__ import annotations

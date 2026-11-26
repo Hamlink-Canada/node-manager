@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 from asterisk_node_manager.asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 
 

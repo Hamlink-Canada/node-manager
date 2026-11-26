@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 # Asterisk Node Manager
 
 A standalone Python application for managing Asterisk node configuration. The

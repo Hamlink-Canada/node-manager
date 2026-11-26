@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Human-readable node settings based on the upstream app_rpt examples."""
 
 from __future__ import annotations
