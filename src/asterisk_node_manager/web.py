@@ -28,7 +28,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
     app = Flask(__name__)
     app.secret_key = _read_secret(settings.secret_key_file)
-    app.config["MAX_CONTENT_LENGTH"] = 1_048_576
+    app.config["MAX_CONTENT_LENGTH"] = 104_857_600
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     sessions = session_factory(settings.database)
     engine = sessions.kw["bind"]
@@ -424,7 +424,11 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
     else:
         for section, entries in values.items():
             for key, value in entries.items():
-                db.add(ConfigValue(file_name=filename, section=section, key=key, value=value))
+                previous = prior_values.get((section, key))
+                if value == SECRET_VALUE and previous is not None and previous.secret:
+                    value = previous.value
+                db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
+                                   secret=is_secret_key(key)))
     for section, lines in preserved.items():
         for index, line in enumerate(lines):
             db.add(CustomLine(file_name=filename, section=section, line_number=index, content=line))
