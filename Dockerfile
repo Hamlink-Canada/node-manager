@@ -21,9 +21,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ASTNODE_PORT=8765
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    asterisk libpam0g util-linux \
+    libpam0g util-linux \
     && rm -rf /var/lib/apt/lists/* \
-    && (getent group asterisk >/dev/null || groupadd --system asterisk) \
+    && groupadd --system asterisk \
     && groupadd --system asterisk-node-manager \
     && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager \
        --home-dir /nonexistent --no-create-home asterisk-node-manager \
