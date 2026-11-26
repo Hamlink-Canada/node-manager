@@ -6,8 +6,7 @@
 {% for node in nodes %}
 [{{ node.node_number }}]
 node = {{ node.node_number }}
-{% for key, value in node.network.items() %}{{ key }} = {{ value }}
-{% endfor %}{% for key, value in node.settings.items() %}{{ key }} = {{ value }}
+{% for key, value in node.settings.items() %}{{ key }} = {{ value }}
 {% endfor %}{% for line in node.custom_lines %}{{ line }}
 {% endfor %}
 {% endfor %}

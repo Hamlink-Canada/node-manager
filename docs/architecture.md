@@ -4,6 +4,10 @@ The SQLite database is the configuration source of truth. SQLAlchemy defines
 the persistent model and Alembic upgrades the schema. The first migration
 creates the schema and seeds the initial network profile.
 
+Network profile config is stored and re-exported as an opaque JSON object.
+Its properties and how they map to Asterisk settings remain undefined until
+the profile format is specified.
+
 The astnode CLI and Flask application use the same library, database models,
 and bundled Jinja2 templates. Configuration-file edits and network profile
 uploads are validated and previewed before commit. A committed change is

@@ -8,6 +8,9 @@
     "schema_version": {"const": 1},
     "key": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-zA-Z0-9._-]+$"},
     "name": {"type": "string", "minLength": 1, "maxLength": 200},
-    "config": {"type": "object"}
+    "config": {
+      "type": "object",
+      "description": "Opaque JSON object stored as supplied. Its properties are intentionally not defined yet."
+    }
   }
 }

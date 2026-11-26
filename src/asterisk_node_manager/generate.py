@@ -39,8 +39,7 @@ def render_database(database: str | Path) -> dict[str, bytes]:
             nodes_context.append({
                 "node_number": node.node_number, "name": node.name,
                 "enabled": node.enabled, "settings": node.settings,
-                "network": network.config if network else {},
-                "network_name": network.name if network else "",
+                "network_key": network.stable_key if network else None,
             })
         for filename in GENERATED_FILES:
             values = [value for value in file_values if value.file_name == filename]
