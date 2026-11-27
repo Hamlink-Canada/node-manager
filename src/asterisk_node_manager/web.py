@@ -964,6 +964,10 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                     db.scalars(select(ConfigValue).where(ConfigValue.file_name == filename))}
     prior_values.update({(row.section, row.key): row for row in
                          db.scalars(select(CustomValue).where(CustomValue.file_name == filename))})
+    submitted_defaults = _stored_defaults(db, filename)
+    submitted_defaults.update({key: value for section, entries in values.items()
+                               if section in {"node-main", "node-main(!)"}
+                               for key, value in entries.items()})
     prior_custom = {}
     for row in db.scalars(select(CustomLine).where(CustomLine.file_name == filename)
                           .order_by(CustomLine.section, CustomLine.line_number)):
@@ -995,7 +999,7 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                 if node is None:
                     node = Node(node_number=int(section), name=f"Node {section}")
                     db.add(node)
-                apply_node_config_values(node, entries, _stored_defaults(db, "rpt.conf"))
+                apply_node_config_values(node, entries, submitted_defaults)
                 for key, value in entries.items():
                     if key in NODE_CONFIG_FIELDS:
                         continue
@@ -1039,7 +1043,7 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                     else:
                         typed_values[key] = value
                 apply_interface_config_values(typed, filename, typed_values,
-                                              _stored_defaults(db, filename))
+                                              submitted_defaults)
                 continue
             for key, value in entries.items():
                 previous = prior_values.get((section, key))

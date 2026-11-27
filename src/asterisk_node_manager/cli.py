@@ -219,8 +219,12 @@ def _import_config(path: Path, commit: bool, settings) -> int:
             values, lines = parse_config(item.name, item.read_text(errors="replace"))
             db.query(CustomLine).filter_by(file_name=item.name, is_default=False).delete()
             db.query(CustomValue).filter_by(file_name=item.name).delete()
+            incoming_defaults = _stored_defaults(db, item.name)
             if item.name == "rpt.conf":
                 expand_asterisk_inheritance(values, lines)
+            incoming_defaults.update({key: value for section, entries in values.items()
+                                      if section in {"node-main", "node-main(!)"}
+                                      for key, value in entries.items()})
             if item.name == "rpt.conf":
                 for section, entries in values.items():
                     node_number = _node_number_from_section(section)
@@ -229,7 +233,7 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                         if node is None:
                             node = Node(node_number=node_number, name=f"Node {node_number}")
                             db.add(node)
-                        apply_node_config_values(node, entries, _stored_defaults(db, "rpt.conf"))
+                        apply_node_config_values(node, entries, incoming_defaults)
                         for key, value in entries.items():
                             if key in NODE_CONFIG_FIELDS:
                                 continue
@@ -253,7 +257,7 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                                 continue
                             typed_values[key] = value
                         apply_interface_config_values(node.simpleusb_settings, item.name, typed_values,
-                                                      _stored_defaults(db, item.name))
+                                                      incoming_defaults)
                         continue
             if item.name == "usbradio.conf":
                 known_radio = node_fields_for_file("usbradio.conf")
@@ -273,7 +277,7 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                             node.usbradio_settings = USBRadioSettings()
                         apply_interface_config_values(node.usbradio_settings, "usbradio.conf", {
                             key: value for key, value in entries.items() if key in known_radio},
-                            _stored_defaults(db, "usbradio.conf"))
+                            incoming_defaults)
                         for key, value in entries.items():
                             if key not in known_radio:
                                 _set_config_value(db, item.name, str(node_number), key, value)

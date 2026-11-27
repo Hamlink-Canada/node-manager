@@ -266,7 +266,9 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                     if rule.is_deleted:
                         continue
                     custom.append(SimpleNamespace(
-                        section=rule.context, line_number=rule.line_number,
+                        section=rule.context,
+                        line_number=(rule.updated_line_number
+                                     if rule.updated_line_number is not None else rule.line_number),
                         content=rule.render()))
                 custom.sort(key=lambda line: (line.section, line.line_number))
             base_sections = list(dict.fromkeys(

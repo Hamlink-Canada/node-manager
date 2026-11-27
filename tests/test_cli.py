@@ -48,6 +48,34 @@ def test_import_commit_maps_known_fields_and_regenerates(monkeypatch, tmp_path):
         sessions.kw["bind"].dispose()
 
 
+def test_import_node_overrides_compare_against_incoming_template_defaults(monkeypatch, tmp_path):
+    source = tmp_path / "existing"
+    source.mkdir()
+    (source / "rpt.conf").write_text(
+        "[node-main]\nhangtime=6000\n[1234](node-main)\nhangtime=5000\n"
+    )
+    settings = Settings(database=tmp_path / "manager.sqlite3", asterisk_directory=tmp_path / "asterisk")
+    upgrade_database(settings.database)
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        from asterisk_node_manager.models import ConfigValue
+        default = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one()
+        default.default_value = "5000"
+    sessions.kw["bind"].dispose()
+    monkeypatch.setattr(cli, "_require_root", lambda: None)
+    monkeypatch.setattr("asterisk_node_manager.writer._replace_files", lambda *args: None)
+
+    assert cli._import_config(source, True, settings) == 0
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1234).one()
+            assert node.hangtime == 5000
+    finally:
+        sessions.kw["bind"].dispose()
+
+
 def test_import_usbradio_without_rpt_section_selects_radio_and_renders(monkeypatch, tmp_path):
     source = tmp_path / "existing"
     source.mkdir()
