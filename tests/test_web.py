@@ -12,8 +12,8 @@ from asterisk_node_manager.database import (
     sqlite_snapshot,
 )
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, Network, Node, Setting,
-                                          USBRadioSettings)
+from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, CustomValue, Network,
+                                          Node, Setting, SimpleUSBSettings, USBRadioSettings)
 from asterisk_node_manager.web import create_app
 
 
@@ -48,6 +48,16 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
     assert b"Demo Node North" in client.get("/").data
 
     sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        node = session.query(Node).filter_by(node_number=1000).one()
+        node.simpleusb_settings.devstr = "usb:1-2"
+        node.simpleusb_settings.serial = "SN-12345"
+    overview = client.get("/")
+    assert b"USB device" in overview.data
+    assert b"Identifier:" in overview.data
+    assert b"usb:1-2" in overview.data
+    assert b"SN-12345" in overview.data
+
     try:
         with sessions() as session:
             node_id = session.query(Node).filter_by(node_number=1000).one().id
@@ -61,6 +71,7 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         assert b'name="usbradio_rxdemod"' in response.data
         saved = client.post(f"/nodes/{node_id}/configuration", data={
             "rxchannel": "SimpleUSB/1000", "duplex": "0", "hangtime": "5000",
+            "simpleusb_devstr": "usb:1-2", "simpleusb_serial": "SN-12345",
             "linktolink": "yes", "advanced_view": "yes",
         })
         assert saved.status_code == 302
@@ -68,10 +79,15 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
             node = session.get(Node, node_id)
             assert node.hangtime is None
             assert node.duplex == 0
+            assert node.simpleusb_settings.devstr == "usb:1-2"
+            assert node.simpleusb_settings.serial == "SN-12345"
         generated_rpt = (settings.demo_output_directory / "rpt.conf").read_text()
         assert "linktolink = yes" in generated_rpt
         assert "duplex = 0" in generated_rpt
-        assert "rxboost = no" in (settings.demo_output_directory / "simpleusb.conf").read_text()
+        generated_simpleusb = (settings.demo_output_directory / "simpleusb.conf").read_text()
+        assert "rxboost = no" in generated_simpleusb
+        assert "devstr = usb:1-2" in generated_simpleusb
+        assert "serial = SN-12345" in generated_simpleusb
         switched = client.post(f"/nodes/{node_id}/configuration", data={
             "rxchannel": "Radio/1000", "duplex": "0", "hangtime": "5000",
             "usbradio_rxdemod": "speaker", "usbradio_rxvoiceadj": "0.625",
@@ -213,6 +229,23 @@ def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_pat
     })
     assert response.status_code == 200
     assert b"That Node ID is already configured." in response.data
+
+
+def test_node_creation_requires_at_least_four_digit_node_id(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    guided = client.post("/nodes/setup", data={
+        "node_number": "123", "name": "Short ID", "callsign": "VE3ABC",
+        "profile": "simplex_hotspot", "interface": "SimpleUSB",
+    })
+    assert guided.status_code == 200
+    assert b"at least four digits" in guided.data
+    assert client.post("/nodes", data={"node_number": "123", "name": "Short ID"}).status_code == 400
     sessions = session_factory(settings.database)
     try:
         with sessions() as session:
@@ -290,6 +323,8 @@ def test_network_add_and_import_are_separate_pages(tmp_path):
     assert b">Networks</button>" in navbar
     assert b">Tools</button>" in navbar
     assert b'class="dropdown-item" href="/changes">Recent changes</a>' in navbar
+    assert navbar.index(b'id="toolsMenu"') < navbar.index(b'href="/changes">Recent changes</a>')
+    assert navbar.index(b'href="/changes">Recent changes</a>') < navbar.index(b"</ul>", navbar.index(b'id="toolsMenu"'))
     assert b'class="dropdown-item" href="/files">Configuration files</a>' in navbar
     assert b'<a class="nav-link" href="/changes">' not in navbar
     add_page = client.get("/networks/add")
@@ -486,7 +521,7 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
         with sessions() as session:
             node = session.query(Node).filter_by(node_number=1000).one()
             assert node.simpleusb_settings.rxmixerset == 600
-            custom = session.query(ConfigValue).filter_by(
+            custom = session.query(CustomValue).filter_by(
                 file_name="simpleusb.conf", section="1000", key="customdriveroption").one()
             assert custom.value == "kept"
     finally:
@@ -516,7 +551,7 @@ def test_advanced_usbradio_file_editor_saves_typed_and_unknown_fields(tmp_path):
             node = session.query(Node).filter_by(node_number=1000).one()
             assert node.usbradio_settings.rxdemod == "speaker"
             assert node.usbradio_settings.rxvoiceadj == "0.625"
-            custom = session.query(ConfigValue).filter_by(
+            custom = session.query(CustomValue).filter_by(
                 file_name="usbradio.conf", section="1000", key="customdriveroption").one()
             assert custom.value == "kept"
     finally:
@@ -676,15 +711,28 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
 
 def test_web_main_logs_mode_and_listen_address(monkeypatch, caplog):
     import logging
+    import signal
     from asterisk_node_manager import web
 
     settings = Settings(database=":memory:", demo_mode=True, listen_address="127.0.0.1", port=8765)
+    installed_handlers = {}
     monkeypatch.setattr(web, "load_settings", lambda: settings)
     monkeypatch.setattr(web, "create_app", lambda _settings: object())
     monkeypatch.setattr(web, "serve", lambda _app, **_kwargs: None)
+    monkeypatch.setattr(web.signal, "signal", lambda signum, handler: installed_handlers.update({signum: handler}))
 
     with caplog.at_level(logging.INFO):
         assert web.main() == 0
 
     assert "Starting node-manager web service in demo mode" in caplog.text
     assert "Listening on http://127.0.0.1:8765" in caplog.text
+    assert installed_handlers[signal.SIGTERM] is web._handle_shutdown
+    assert installed_handlers[signal.SIGINT] is web._handle_shutdown
+
+
+def test_web_shutdown_handler_exits_for_waitress_to_close(monkeypatch):
+    from asterisk_node_manager import web
+
+    with pytest.raises(SystemExit) as exc_info:
+        web._handle_shutdown(15, None)
+    assert exc_info.value.code == 0

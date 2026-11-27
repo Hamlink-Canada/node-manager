@@ -49,6 +49,8 @@ _FIELD_DEFINITIONS = (
     {"key": "rxmixerset", "file": "simpleusb.conf", "group": "simpleusb", "kind": "number", "default": "500", "min": 0, "max": 999},
     {"key": "txmixaset", "file": "simpleusb.conf", "group": "simpleusb", "kind": "number", "default": "500", "min": 0, "max": 999},
     {"key": "txmixbset", "file": "simpleusb.conf", "group": "simpleusb", "kind": "number", "default": "500", "min": 0, "max": 999},
+    {"key": "devstr", "file": "simpleusb.conf", "group": "simpleusb", "kind": "text", "default": "", "max": 200},
+    {"key": "serial", "file": "simpleusb.conf", "group": "simpleusb", "kind": "text", "default": "", "max": 200},
     {"key": "rxboost", "file": "usbradio.conf", "group": "usbradio", "kind": "boolean", "default": "yes"},
     {"key": "carrierfrom", "file": "usbradio.conf", "group": "usbradio", "kind": "choice", "default": "dsp",
      "choices": ("no", "usb", "usbinvert", "dsp", "vox", "pp", "ppinvert")},
@@ -99,8 +101,8 @@ _FIELD_DEFINITIONS = (
      "choices": ("0", "1"), "advanced": True},
     {"key": "hdwtype", "file": "usbradio.conf", "group": "usbradio_advanced", "kind": "choice", "default": "0",
      "choices": ("0", "1"), "advanced": True},
-    {"key": "devstr", "file": "usbradio.conf", "group": "usbradio_advanced", "kind": "text", "default": "", "max": 200, "advanced": True},
-    {"key": "serial", "file": "usbradio.conf", "group": "usbradio_advanced", "kind": "text", "default": "", "max": 200, "advanced": True},
+    {"key": "devstr", "file": "usbradio.conf", "group": "usbradio", "kind": "text", "default": "", "max": 200},
+    {"key": "serial", "file": "usbradio.conf", "group": "usbradio", "kind": "text", "default": "", "max": 200},
 )
 
 _BASIC_FIELDS = {"rxchannel", "duplex"}
@@ -207,7 +209,8 @@ def usbradio_config_values(settings) -> dict[str, str]:
     return interface_config_values(settings, "usbradio.conf")
 
 
-def interface_config_values(settings, file_name: str) -> dict[str, str]:
+def interface_config_values(settings, file_name: str,
+                            defaults: dict[str, str] | None = None) -> dict[str, str]:
     """Return explicit interface overrides with declared defaults filled in."""
     definitions = {field["key"]: field for field in _FIELD_DEFINITIONS
                    if field.get("file") == file_name}
@@ -218,13 +221,14 @@ def interface_config_values(settings, file_name: str) -> dict[str, str]:
         if value is None:
             if "default" not in definition:
                 continue
-            result[key] = str(definition["default"])
+            result[key] = str((defaults or {}).get(key, definition["default"]))
             continue
         result[key] = ("yes" if value else "no") if definition["kind"] == "boolean" else str(value)
     return result
 
 
-def apply_interface_config_values(settings, file_name: str, values: dict[str, str]) -> None:
+def apply_interface_config_values(settings, file_name: str, values: dict[str, str],
+                                  defaults: dict[str, str] | None = None) -> None:
     """Set typed radio interface fields from validated Asterisk-style values."""
     definitions = {field["key"]: field for field in _FIELD_DEFINITIONS
                    if field.get("file") == file_name}
@@ -234,7 +238,11 @@ def apply_interface_config_values(settings, file_name: str, values: dict[str, st
             continue
         kind = definition["kind"]
         value = raw
-        if "default" not in definition and value == "":
+        declared_default = (defaults or {}).get(key, definition.get("default"))
+        if declared_default is not None and value == str(declared_default):
+            setattr(settings, key, None)
+            continue
+        if declared_default is None and value == "":
             setattr(settings, key, None)
             continue
         if kind == "boolean":
@@ -249,7 +257,7 @@ def apply_interface_config_values(settings, file_name: str, values: dict[str, st
         setattr(settings, key, value)
 
 
-def node_config_values(node) -> dict[str, str]:
+def node_config_values(node, defaults: dict[str, str] | None = None) -> dict[str, str]:
     """Return typed node columns in their Asterisk configuration form."""
     result = {}
     for key, definition in NODE_CONFIG_FIELDS.items():
@@ -257,7 +265,7 @@ def node_config_values(node) -> dict[str, str]:
         if value is None:
             if "default" not in definition:
                 continue
-            result[key] = str(definition["default"])
+            result[key] = str((defaults or {}).get(key, definition["default"]))
             continue
         if definition["kind"] == "boolean":
             result[key] = "yes" if value else "no"
@@ -266,11 +274,16 @@ def node_config_values(node) -> dict[str, str]:
     return result
 
 
-def apply_node_config_values(node, values: dict[str, str]) -> None:
+def apply_node_config_values(node, values: dict[str, str],
+                             defaults: dict[str, str] | None = None) -> None:
     """Set known node columns from Asterisk-style string values."""
     for key, value in values.items():
         definition = NODE_CONFIG_FIELDS.get(key)
         if definition is None:
+            continue
+        declared_default = (defaults or {}).get(key, definition.get("default"))
+        if declared_default is not None and value == str(declared_default):
+            setattr(node, key, None)
             continue
         if "default" not in definition and value == "":
             setattr(node, key, None)

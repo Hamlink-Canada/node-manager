@@ -59,8 +59,19 @@ update records by profile key. In Docker Compose, place profiles in the local
 `network-profiles/` directory. The AllStarLink profile remains the only
 network seeded by the database migration.
 
+Module load directives and dialplan extension rules use dedicated database
+tables. The generated module list infers radio channel driver loading from
+configured node interfaces. Built-in extension rules remain stored alongside
+their custom overrides so a future rule editor can restore the packaged rule.
+
 See docs/architecture.md for the local writer, PAM, migration, backup, and
 import workflows.
+
+The project is still net new and has no supported prior database version. Its
+Alembic history is intentionally a single initial migration that creates the
+current schema from scratch. Earlier development migrations were consolidated
+and removed; the initial migration is not intended to upgrade databases made
+with those interim schemas.
 
 ## Packaging
 

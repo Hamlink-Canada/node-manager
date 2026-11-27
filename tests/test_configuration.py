@@ -83,6 +83,18 @@ def test_configuration_exposes_radio_fields_and_can_build_both_switchable_panels
     assert {"simpleusb_rxmixerset", "usbradio_rxmixerset"} <= fields
 
 
+def test_usb_device_identity_fields_are_available_in_default_view_for_both_drivers():
+    groups = node_field_groups(1234, {"rxchannel": "SimpleUSB/1234"}, include_other_interfaces=True)
+    fields = {field["form_key"]: (group, field)
+              for group in groups for field in group["fields"]}
+    for key in ("simpleusb_devstr", "simpleusb_serial", "usbradio_devstr", "usbradio_serial"):
+        group, field = fields[key]
+        assert group["advanced"] is False
+        assert field["value"] == ""
+        assert field["has_default"] is True
+        assert field["help"]
+
+
 def test_validation_rejects_invalid_numeric_values_and_normalizes_valid_values():
     values, errors = validate_node_settings({"duplex": "9", "hangtime": "-1"}, 1234)
     assert values is None

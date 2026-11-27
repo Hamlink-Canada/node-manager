@@ -6,18 +6,23 @@ import argparse
 import os
 import grp
 import pwd
+import re
 import sqlite3
 import tempfile
 import sys
+from collections import Counter
 from pathlib import Path
 
 from .config import load_settings
 from .database import database_write_lock, session_factory, sqlite_snapshot
-from .asterisk_config import is_secret_key, parse_config
+from .asterisk_config import expand_asterisk_inheritance, is_secret_key, parse_config
 from .migrate import upgrade_database, validate_database_backup
-from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings, USBRadioSettings
+from .models import (Change, ConfigValue, CustomLine, CustomValue, Network, Node,
+                     SimpleUSBSettings, USBRadioSettings)
 from .configuration import (NODE_CONFIG_FIELDS, apply_interface_config_values,
                             apply_node_config_values, node_config_values, node_fields_for_file)
+from .structured_config import (parse_extension_rule, parse_module_directive,
+                                save_structured_lines)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -167,6 +172,12 @@ def _require_root() -> None:
         raise SystemExit("This command requires root or sudo")
 
 
+def _node_number_from_section(section: str) -> int | None:
+    """Read a numeric node header, including generated node-main inheritance."""
+    match = re.fullmatch(r"(\d+)(?:\((?!\!)[^()]*\))?", section)
+    return int(match.group(1)) if match else None
+
+
 def _import_config(path: Path, commit: bool, settings) -> int:
     if not path.is_dir():
         print(f"Configuration directory not found: {path}", file=sys.stderr)
@@ -186,74 +197,135 @@ def _import_config(path: Path, commit: bool, settings) -> int:
         print("Use --commit after reviewing the import plan.")
         return 0
     _require_root()
+    explicit_rxchannel_nodes = set()
+    for item in files:
+        values, _lines = parse_config(item.name, item.read_text(errors="replace"))
+        if item.name == "rpt.conf":
+            explicit_rxchannel_nodes = {
+                number for section, entries in values.items()
+                if (number := _node_number_from_section(section)) is not None
+                and "rxchannel" in entries
+            }
+        for section in values if item.name in {"rpt.conf", "simpleusb.conf", "usbradio.conf"} else ():
+            number = _node_number_from_section(section)
+            if number is not None and number < 1000:
+                print(f"Invalid Node ID {number} in {item.name}; Node IDs must have at least four digits.",
+                      file=sys.stderr)
+                return 2
     upgrade_database(settings.database)
     with session_factory(settings.database)() as db:
         for item in files:
             values, lines = parse_config(item.name, item.read_text(errors="replace"))
             if item.name == "rpt.conf":
+                expand_asterisk_inheritance(values, lines)
+            if item.name == "rpt.conf":
                 for section, entries in values.items():
-                    if section.isdigit():
-                        node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                    node_number = _node_number_from_section(section)
+                    if node_number is not None:
+                        node = db.query(Node).filter_by(node_number=node_number).one_or_none()
                         if node is None:
-                            node = Node(node_number=int(section), name=f"Node {section}")
+                            node = Node(node_number=node_number, name=f"Node {node_number}")
                             db.add(node)
-                        apply_node_config_values(node, entries)
+                        apply_node_config_values(node, entries, _stored_defaults(db, "rpt.conf"))
                         for key, value in entries.items():
                             if key in NODE_CONFIG_FIELDS:
                                 continue
-                            _set_config_value(db, item.name, section, key, value)
+                            _set_config_value(db, item.name, str(node_number), key, value)
                         continue
             if item.name == "simpleusb.conf":
                 known_usb = node_fields_for_file("simpleusb.conf")
                 for section, entries in values.items():
-                    if section.isdigit():
-                        node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                    node_number = _node_number_from_section(section)
+                    if node_number is not None:
+                        node = db.query(Node).filter_by(node_number=node_number).one_or_none()
                         if node is None:
-                            node = Node(node_number=int(section), name=f"Node {section}")
+                            node = Node(node_number=node_number, name=f"Node {node_number}")
                             db.add(node)
                         if node.simpleusb_settings is None:
                             node.simpleusb_settings = SimpleUSBSettings()
+                        typed_values = {}
                         for key, value in entries.items():
                             if key not in known_usb:
-                                _set_config_value(db, item.name, section, key, value)
+                                _set_config_value(db, item.name, str(node_number), key, value)
                                 continue
-                            if key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}:
-                                value = value.lower() in {"yes", "true", "1", "on"}
-                            elif key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}:
-                                try:
-                                    value = int(value)
-                                except ValueError:
-                                    continue
-                            setattr(node.simpleusb_settings, key, value)
+                            typed_values[key] = value
+                        apply_interface_config_values(node.simpleusb_settings, item.name, typed_values,
+                                                      _stored_defaults(db, item.name))
                         continue
             if item.name == "usbradio.conf":
                 known_radio = node_fields_for_file("usbradio.conf")
                 for section, entries in values.items():
-                    if section.isdigit():
-                        node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                    node_number = _node_number_from_section(section)
+                    if node_number is not None:
+                        node = db.query(Node).filter_by(node_number=node_number).one_or_none()
                         if node is None:
-                            node = Node(node_number=int(section), name=f"Node {section}",
-                                        rxchannel=f"Radio/{section}")
+                            node = Node(node_number=node_number, name=f"Node {node_number}")
+                            if node_number not in explicit_rxchannel_nodes:
+                                node.rxchannel = f"Radio/{node_number}"
                             db.add(node)
-                        elif node_config_values(node)["rxchannel"] == "Local/pseudo":
-                            node.rxchannel = f"Radio/{section}"
+                        elif (node_number not in explicit_rxchannel_nodes
+                              and node_config_values(node)["rxchannel"] == "Local/pseudo"):
+                            node.rxchannel = f"Radio/{node_number}"
                         if node.usbradio_settings is None:
                             node.usbradio_settings = USBRadioSettings()
                         apply_interface_config_values(node.usbradio_settings, "usbradio.conf", {
-                            key: value for key, value in entries.items() if key in known_radio})
+                            key: value for key, value in entries.items() if key in known_radio},
+                            _stored_defaults(db, "usbradio.conf"))
                         for key, value in entries.items():
                             if key not in known_radio:
-                                _set_config_value(db, item.name, section, key, value)
+                                _set_config_value(db, item.name, str(node_number), key, value)
                         continue
             for section, entries in values.items():
-                if item.name in {"rpt.conf", "simpleusb.conf", "usbradio.conf"} and section.isdigit():
+                if (item.name in {"rpt.conf", "simpleusb.conf", "usbradio.conf"}
+                        and _node_number_from_section(section) is not None):
                     continue
                 for key, value in entries.items():
                     _set_config_value(db, item.name, section, key, value)
-            db.query(CustomLine).filter_by(file_name=item.name).delete()
+            structured_lines = {}
+            if item.name in {"modules.conf", "extensions.conf"}:
+                preserved_lines = {}
+                for section, section_lines in lines.items():
+                    for line in section_lines:
+                        is_structured = ((item.name == "modules.conf" and parse_module_directive(line))
+                                         or (item.name == "extensions.conf" and parse_extension_rule(line)))
+                        if is_structured:
+                            structured_lines.setdefault(section, []).append(line)
+                        else:
+                            preserved_lines.setdefault(section, []).append(line)
+                lines = preserved_lines
+                save_structured_lines(db, item.name, structured_lines, replace_defaults=False)
+            baseline_lines = Counter(
+                (row.section, row.content.strip())
+                for row in db.query(CustomLine).filter_by(file_name=item.name, is_default=True)
+                if row.content.strip())
+            db.query(CustomLine).filter_by(file_name=item.name, is_default=False).delete()
+            db.query(CustomValue).filter_by(file_name=item.name).delete()
+            sections_with_codec_directives = {
+                section for section, section_lines in lines.items()
+                if any(re.match(r"^\s*(?:allow|disallow)\s*(?:=>|=)", line, re.IGNORECASE)
+                       for line in section_lines)
+            }
+            for default_line in db.query(CustomLine).filter_by(file_name=item.name, is_default=True):
+                if re.match(r"^\s*(?:allow|disallow)\s*(?:=>|=)",
+                            default_line.content, re.IGNORECASE):
+                    default_line.is_deleted = default_line.section in sections_with_codec_directives
             for section, entries in lines.items():
                 for index, content in enumerate(entries):
-                    db.add(CustomLine(file_name=item.name, section=section, line_number=index, content=content))
+                    stripped = content.strip()
+                    if not stripped or stripped.startswith((";", "#")):
+                        continue
+                    is_codec_directive = re.match(
+                        r"^\s*(?:allow|disallow)\s*(?:=>|=)", content, re.IGNORECASE)
+                    if is_codec_directive and section in sections_with_codec_directives:
+                        db.add(CustomLine(file_name=item.name, section=section, line_number=index,
+                                          content=content, is_default=False))
+                        continue
+                    key = (section, stripped)
+                    if baseline_lines[key]:
+                        baseline_lines[key] -= 1
+                        continue
+                    db.add(CustomLine(file_name=item.name, section=section, line_number=index,
+                                      content=content, is_default=False))
         revision = (db.query(Change.revision).order_by(Change.revision.desc()).first() or (0,))[0] + 1
         db.add(Change(actor=os.environ.get("SUDO_USER", os.environ.get("USER", "root")),
                       summary=f"Imported configuration from {path}", revision=revision,
@@ -270,13 +342,22 @@ def _import_config(path: Path, commit: bool, settings) -> int:
 
 
 def _set_config_value(db, filename: str, section: str, key: str, value: str) -> None:
-    old = db.query(ConfigValue).filter_by(file_name=filename, section=section, key=key).one_or_none()
+    primary = db.query(ConfigValue).filter_by(
+        file_name=filename, section=section, key=key).one_or_none()
+    if primary is not None and primary.value == value:
+        return
+    old = db.query(CustomValue).filter_by(file_name=filename, section=section, key=key).one_or_none()
     if old is None:
-        db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
+        db.add(CustomValue(file_name=filename, section=section, key=key, value=value,
                            secret=is_secret_key(key)))
     else:
         old.value = value
         old.secret = is_secret_key(key)
+
+
+def _stored_defaults(db, filename: str) -> dict[str, str]:
+    return {row.key: row.value for row in db.query(ConfigValue).filter_by(
+        file_name=filename, section="node-main").all()}
 
 
 if __name__ == "__main__":

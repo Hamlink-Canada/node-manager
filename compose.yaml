@@ -1,5 +1,7 @@
 services:
   web:
+    init: true
+    stop_grace_period: 30s
     build:
       context: .
       args:
@@ -25,6 +27,8 @@ services:
     restart: unless-stopped
 
   writer:
+    init: true
+    stop_grace_period: 30s
     image: asterisk-node-manager:local
     build:
       context: .

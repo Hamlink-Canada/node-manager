@@ -12,9 +12,10 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from sqlalchemy import select
 
 from .configuration import (interface_config_values, node_config_values,
-                            node_fields_for_file, usbradio_config_values)
+                            node_fields_for_file)
 from .database import session_factory
-from .models import ConfigValue, CustomLine, Network, Node, Setting
+from .models import (ConfigValue, CustomLine, CustomValue, ExtensionRule, ModuleDirective,
+                     Network, Node, Setting)
 from .networks import network_fields
 
 GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
@@ -24,52 +25,72 @@ GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
 
 
 def section_header(section: str) -> str:
-    """Render a section name with Asterisk inheritance/template suffix syntax."""
-    match = re.fullmatch(r"(.*?)(\([^()]*\))?", section)
-    if match is None:
-        return f"[{section}]"
-    name, suffix = match.groups()
-    return f"[{name}]{suffix or ''}"
+    """Render a concrete section; Asterisk inheritance is expanded by this app."""
+    plain_section = re.sub(r"\([^()]*\)$", "", section)
+    return f"[{plain_section}]"
+
+
+def _expand_asterisk_templates(values: list, custom: list) -> tuple[list, list]:
+    """Materialize Asterisk section inheritance before rendering concrete sections."""
+    all_sections = {item.section for item in [*values, *custom] if item.section}
+    templates = {section[:-3]: section for section in all_sections if section.endswith("(!)")}
+    children: dict[str, str] = {}
+    for section in all_sections:
+        match = re.fullmatch(r"(.+)\(([^()]*)\)", section)
+        if match and match.group(2) in templates:
+            children[section] = match.group(2)
+
+    for source_section, parent_name in children.items():
+        match = re.fullmatch(r"(.+)\(([^()]*)\)", source_section)
+        if match is None:
+            continue
+        child_name = match.group(1)
+        parent_section = templates[parent_name]
+        for row in values:
+            if row.section == source_section:
+                row.section = child_name
+        for row in custom:
+            if row.section == source_section:
+                row.section = child_name
+        child_keys = {(row.section, row.key) for row in values if row.section == child_name}
+        for row in values:
+            if row.section == parent_section and (child_name, row.key) not in child_keys:
+                values.append(SimpleNamespace(file_name=row.file_name, section=child_name,
+                                              key=row.key, value=row.value, secret=row.secret))
+        child_custom = [row for row in custom if row.section == child_name]
+        parent_custom = [row for row in custom if row.section == parent_section]
+        if parent_custom:
+            offset = min((row.line_number for row in child_custom), default=0) - len(parent_custom)
+            inherited = [SimpleNamespace(section=child_name, content=row.content,
+                                         line_number=offset + index)
+                         for index, row in enumerate(parent_custom)]
+            custom.extend(inherited)
+
+    consumed_templates = set(children.values())
+    values = [row for row in values if not (
+        row.section in {templates[name] for name in consumed_templates})]
+    custom = [row for row in custom if not (
+        row.section in {templates[name] for name in consumed_templates})]
+    for row in values:
+        row.section = re.sub(r"\([^()]*\)$", "", row.section)
+    for row in custom:
+        row.section = re.sub(r"\([^()]*\)$", "", row.section)
+    return values, sorted(custom, key=lambda row: (row.section, row.line_number))
 
 
 def order_sections(sections: list[str]) -> list[str]:
-    """Keep Asterisk template sections before sections that inherit from them."""
-    unique = list(dict.fromkeys(section for section in sections if section))
-    templates = {section[:-3]: section for section in unique if section.endswith("(!)")}
-    parents: dict[str, str] = {}
-    for section in unique:
-        match = re.fullmatch(r"(.+)\(([^()]*)\)", section)
-        if match and match.group(2) != "!" and match.group(2) in templates:
-            parents[section] = templates[match.group(2)]
-
-    ordered: list[str] = []
-    visited: set[str] = set()
-    visiting: set[str] = set()
-
-    def visit(section: str) -> None:
-        if section in visited or section in visiting:
-            return
-        visiting.add(section)
-        parent = parents.get(section)
-        if parent is not None:
-            visit(parent)
-        visiting.remove(section)
-        visited.add(section)
-        ordered.append(section)
-
-    for section in unique:
-        visit(section)
-    return ordered
+    """Preserve first-seen order after inheritance has been expanded."""
+    return list(dict.fromkeys(section for section in sections if section))
 
 
 def _network_registration(line: str, profiles: dict[int, dict]) -> tuple[str, str, str] | None:
     """Route a preserved numeric-node registration using that node's network profile."""
-    match = re.match(r"^\s*register\s*=>\s*(\d+):([^@]+)@([^\s;]+)(.*)$", line, re.IGNORECASE)
+    match = re.match(r"^\s*register\s*(?:=>|=)\s*(\d+):([^@]+)@([^\s;]+)(.*)$", line, re.IGNORECASE)
     if match is None:
         return None
     node_number, password, old_server, suffix = match.groups()
     profile = profiles.get(int(node_number))
-    if profile is None:
+    if not profile:
         return None
     method = profile.get("registration_method", "none")
     if method == "none":
@@ -85,16 +106,6 @@ def _network_registration(line: str, profiles: dict[int, dict]) -> tuple[str, st
         server = f"{server}:{port}"
         return "iax.conf", "general", f"register => {node_number}:{password}@{server}{suffix}"
     return None
-
-
-def _base_configuration(filename: str):
-    """Load the packaged baseline as configuration data for one generated file."""
-    from .asterisk_config import parse_config
-
-    path = Path(__file__).parent / "conf" / "base" / filename
-    if not path.is_file():
-        return {}, {}
-    return parse_config(filename, path.read_text(encoding="utf-8"))
 
 
 def _node_section(section: str) -> bool:
@@ -119,18 +130,45 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
         usbradio_fields = node_fields_for_file("usbradio.conf")
         file_values = list(session.scalars(select(ConfigValue).order_by(
             ConfigValue.file_name, ConfigValue.section, ConfigValue.key)))
+        custom_values = list(session.scalars(select(CustomValue).order_by(
+            CustomValue.file_name, CustomValue.section, CustomValue.key)))
         custom_lines = list(session.scalars(select(CustomLine).order_by(
-            CustomLine.file_name, CustomLine.id)))
+            CustomLine.file_name, CustomLine.section, CustomLine.line_number, CustomLine.id)))
+        custom_lines = [line for line in custom_lines if not line.is_deleted]
+        module_directives = list(session.scalars(select(ModuleDirective).order_by(
+            ModuleDirective.section, ModuleDirective.line_number, ModuleDirective.id)))
+        extension_rules = list(session.scalars(select(ExtensionRule).order_by(
+            ExtensionRule.context, ExtensionRule.line_number, ExtensionRule.id)))
+        rpt_value_map = {}
+        for value in file_values:
+            if value.file_name == "rpt.conf":
+                rpt_value_map[(value.section, value.key)] = SimpleNamespace(
+                    file_name=value.file_name, section=value.section, key=value.key,
+                    value=value.value, secret=value.secret)
+        for value in custom_values:
+            if value.file_name == "rpt.conf":
+                rpt_value_map[(value.section, value.key)] = SimpleNamespace(
+                    file_name=value.file_name, section=value.section, key=value.key,
+                    value=value.value, secret=value.secret)
+        rpt_values = list(rpt_value_map.values())
+        rpt_custom_lines = [line for line in custom_lines if line.file_name == "rpt.conf"]
+        rpt_values, rpt_custom_lines = _expand_asterisk_templates(rpt_values, rpt_custom_lines)
+        node_defaults = {value.key: value.value for value in rpt_values
+                         if value.section.startswith("node-main")}
+        simpleusb_defaults = {value.key: value.value for value in file_values
+                              if value.file_name == "simpleusb.conf" and value.section.startswith("node-main")}
+        usbradio_defaults = {value.key: value.value for value in file_values
+                             if value.file_name == "usbradio.conf" and value.section.startswith("node-main")}
         nodes_context = []
         node_profiles = {}
         usb_values = []
         radio_values = []
         for node in nodes:
             network = node.network if advanced_networks and node.network else default_profile
-            advanced = {value.key: value.value for value in file_values
-                        if value.file_name == "rpt.conf" and value.section == str(node.node_number)
-                        and value.key not in node_config_values(node)}
-            rpt_settings = {**node_config_values(node), **advanced}
+            advanced = {value.key: value.value for value in rpt_values
+                        if value.section == str(node.node_number)
+                        and value.key not in node_config_values(node, node_defaults)}
+            rpt_settings = {**node_defaults, **node_config_values(node, node_defaults), **advanced}
             profile = network_fields(network) if network else {}
             node_profiles[node.node_number] = profile
             if profile:
@@ -158,27 +196,69 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                 typed = node.simpleusb_settings
                 usb_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
                                                   value=value, secret=False)
-                                  for key, value in interface_config_values(typed, "simpleusb.conf").items())
+                                  for key, value in interface_config_values(
+                                      typed, "simpleusb.conf", simpleusb_defaults).items())
             if rxchannel.startswith("Radio/") and node.usbradio_settings:
                 radio_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
                                                     value=value, secret=False)
-                                    for key, value in usbradio_config_values(node.usbradio_settings).items())
+                                    for key, value in interface_config_values(
+                                        node.usbradio_settings, "usbradio.conf", usbradio_defaults).items())
         for filename in GENERATED_FILES:
-            base_values, base_custom = _base_configuration(filename)
-            base_sections = list(dict.fromkeys((*base_values, *base_custom)))
-            merged_values = {section: dict(entries) for section, entries in base_values.items()}
-            for value in file_values:
-                if value.file_name == filename:
-                    merged_values.setdefault(value.section, {})[value.key] = value
-            values = [SimpleNamespace(file_name=filename, section=section, key=key,
-                                      value=value.value if hasattr(value, "value") else value,
-                                      secret=getattr(value, "secret", False))
-                      for section, entries in merged_values.items()
-                      for key, value in entries.items()]
-            custom = [SimpleNamespace(section=section, line_number=index, content=content)
-                      for section, lines in base_custom.items()
-                      for index, content in enumerate(lines)]
-            custom.extend(line for line in custom_lines if line.file_name == filename)
+            if filename == "rpt.conf":
+                values, custom = rpt_values, rpt_custom_lines
+            else:
+                merged_values = {}
+                for value in file_values:
+                    if value.file_name == filename:
+                        merged_values.setdefault(value.section, {})[value.key] = value.value
+                for value in custom_values:
+                    if value.file_name == filename:
+                        merged_values.setdefault(value.section, {})[value.key] = value
+                values = [SimpleNamespace(file_name=filename, section=section, key=key,
+                                          value=value.value if hasattr(value, "value") else value,
+                                          secret=getattr(value, "secret", False))
+                          for section, entries in merged_values.items()
+                          for key, value in entries.items()]
+                custom = [line for line in custom_lines if line.file_name == filename]
+                values, custom = _expand_asterisk_templates(values, custom)
+            if filename == "modules.conf":
+                active_module_actions = {
+                    "chan_simpleusb.so": "load" if any(
+                        node_config_values(node, node_defaults)["rxchannel"].startswith("SimpleUSB/")
+                        for node in nodes) else "noload",
+                    "chan_usbradio.so": "load" if any(
+                        node_config_values(node, node_defaults)["rxchannel"].startswith("Radio/")
+                        for node in nodes) else "noload",
+                    "chan_voter.so": "load" if any(
+                        node_config_values(node, node_defaults)["rxchannel"].startswith("Voter/")
+                        for node in nodes) else "noload",
+                    "chan_usrp.so": "load" if any(
+                        node_config_values(node, node_defaults)["rxchannel"].startswith("USRP/")
+                        for node in nodes) else "noload",
+                    "res_usbradio.so": "require" if any(
+                        node_config_values(node, node_defaults)["rxchannel"].startswith(
+                            ("SimpleUSB/", "Radio/")) for node in nodes) else "noload",
+                }
+                for directive in module_directives:
+                    if directive.is_deleted:
+                        continue
+                    module = directive.effective_module
+                    action = active_module_actions.get(module, directive.effective_action)
+                    custom.append(SimpleNamespace(
+                        section=directive.section, line_number=directive.line_number,
+                        content=f"{action} => {module}"))
+                custom.sort(key=lambda line: (line.section, line.line_number))
+            elif filename == "extensions.conf":
+                for rule in extension_rules:
+                    if rule.is_deleted:
+                        continue
+                    custom.append(SimpleNamespace(
+                        section=rule.context, line_number=rule.line_number,
+                        content=rule.render()))
+                custom.sort(key=lambda line: (line.section, line.line_number))
+            base_sections = list(dict.fromkeys(
+                [value.section for value in values if value.section and value.section != "node-main"]
+                + [line.section for line in custom if line.section and line.section != "node-main"]))
             if filename in {"simpleusb.conf", "usbradio.conf"}:
                 values = [SimpleNamespace(**{**vars(value), "section": f"{value.section}(node-main)"})
                           if value.section.isdigit() else value for value in values]
@@ -187,7 +267,7 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
             if filename in {"iax.conf", "rpt_http_registrations.conf"}:
                 routed = []
                 for line in custom_lines:
-                    if not re.match(r"^\s*register\s*=>", line.content, re.IGNORECASE):
+                    if not re.match(r"^\s*register\s*(?:=>|=)", line.content, re.IGNORECASE):
                         continue
                     destination = _network_registration(line.content, node_profiles)
                     if destination is not None:
@@ -200,49 +280,59 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                                                       line_number=source.line_number))
             template_name = f"{filename}.j2"
             if filename == "rpt.conf":
+                node_sections = {str(node.node_number) for node in nodes}
                 for node in nodes_context:
                     node["custom_lines"] = [line.content for line in custom
                                             if line.section == str(node["node_number"])]
                 content = templates.get_template(template_name).render(
                     nodes=nodes_context,
-                    values=[value for value in values if not value.section.isdigit()],
-                    custom_lines=[line for line in custom if not line.section.isdigit()],
+                    values=[value for value in values
+                            if value.section not in node_sections and value.section != "node-main"],
+                    custom_lines=[line for line in custom if line.section not in node_sections],
                     global_custom_lines=[line for line in custom if not line.section],
                     sections=order_sections([
                         *base_sections,
-                        *(line.section for line in custom if line.section and not _node_section(line.section)),
-                        *(value.section for value in values if value.section and not _node_section(value.section)),
+                        *(line.section for line in custom if line.section and line.section not in node_sections),
+                        *(value.section for value in values if value.section and value.section != "node-main"
+                          and value.section not in node_sections),
                     ]),
                     section_header=section_header)
             else:
                 if filename == "simpleusb.conf":
+                    configured_nodes = [node for node in nodes if node_config_values(node, node_defaults)["rxchannel"].startswith("SimpleUSB/")]
+                    template_defaults = [value for value in values if value.section == "node-main"]
                     values = [value for value in values
-                              if not (_node_section(value.section) and value.key in simpleusb_fields)]
-                    values.extend(usb_values)
+                              if value.section != "node-main"
+                              and not (_node_section(value.section) and value.key in simpleusb_fields)]
+                    typed_by_node = {}
+                    for value in usb_values:
+                        typed_by_node.setdefault(value.section.split("(", 1)[0], {})[value.key] = value
+                    for node in configured_nodes:
+                        section = str(node.node_number)
+                        node_values = {value.key: value for value in template_defaults}
+                        node_values.update(typed_by_node.get(section, {}))
+                        values.extend(SimpleNamespace(file_name=filename, section=section, key=key,
+                                                      value=value.value, secret=value.secret)
+                                      for key, value in node_values.items())
                     values.sort(key=lambda value: (value.section, value.key))
                 elif filename == "usbradio.conf":
+                    configured_nodes = [node for node in nodes if node_config_values(node, node_defaults)["rxchannel"].startswith("Radio/")]
+                    template_defaults = [value for value in values if value.section == "node-main"]
                     values = [value for value in values
-                              if not (_node_section(value.section) and value.key in usbradio_fields)]
-                    values.extend(radio_values)
+                              if value.section != "node-main"
+                              and not (_node_section(value.section) and value.key in usbradio_fields)]
+                    typed_by_node = {}
+                    for value in radio_values:
+                        typed_by_node.setdefault(value.section.split("(", 1)[0], {})[value.key] = value
+                    for node in configured_nodes:
+                        section = str(node.node_number)
+                        node_values = {value.key: value for value in template_defaults}
+                        node_values.update(typed_by_node.get(section, {}))
+                        values.extend(SimpleNamespace(file_name=filename, section=section, key=key,
+                                                      value=value.value, secret=value.secret)
+                                      for key, value in node_values.items())
                     values.sort(key=lambda value: (value.section, value.key))
-                elif filename == "modules.conf":
-                    active_drivers = {
-                        "chan_simpleusb.so": any(node_config_values(node)["rxchannel"].startswith("SimpleUSB/") for node in nodes),
-                        "chan_usbradio.so": any(node_config_values(node)["rxchannel"].startswith("Radio/") for node in nodes),
-                        "chan_voter.so": any(node_config_values(node)["rxchannel"].startswith("Voter/") for node in nodes),
-                    }
-                    rewritten = []
-                    for line in custom:
-                        match = re.match(r"^(\s*)(load|noload)(\s*(?:=>|=)\s*)([^\s;]+)(.*)$",
-                                         line.content, re.IGNORECASE)
-                        if match and match.group(4) in active_drivers:
-                            indent, _, separator, module, suffix = match.groups()
-                            directive = "load" if active_drivers[module] else "noload"
-                            line = SimpleNamespace(section=line.section, line_number=line.line_number,
-                                                   content=f"{indent}{directive}{separator}{module}{suffix}")
-                        rewritten.append(line)
-                    custom = rewritten
-                content = templates.get_template("generic.conf.j2").render(
+                content = templates.get_template(template_name).render(
                     filename=filename, values=values, custom_lines=custom,
                     sections=order_sections([
                         *base_sections,
@@ -250,8 +340,25 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                         *(value.section for value in values),
                     ]),
                     section_header=section_header)
-            output[filename] = content.encode("utf-8")
+            output[filename] = _without_comments(content).encode("utf-8")
     return output
+
+
+def _without_comments(content: str) -> str:
+    """Remove full-line and inline Asterisk comments from rendered output."""
+    from .asterisk_config import _split_inline_comment
+
+    lines = []
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(";") or (stripped.startswith("#") and not
+                                         stripped.lower().startswith(("#include", "#tryinclude"))):
+            continue
+        if "=" in line or "=>" in line:
+            line, _comment = _split_inline_comment(line)
+        if line.strip():
+            lines.append(line.rstrip())
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def hashes(files: dict[str, bytes]) -> dict[str, str]:

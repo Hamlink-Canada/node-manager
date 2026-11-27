@@ -34,7 +34,7 @@ def parse_config(filename: str, text: str) -> tuple[dict[str, dict[str, str]], d
                 key, value = match.groups()
                 value, comment = _split_inline_comment(value)
                 if key.strip().lower() in {
-                    "allow", "exten", "load", "noload", "register", "require", "same",
+                    "allow", "disallow", "exten", "load", "noload", "register", "require", "same",
                 }:
                     preserved.setdefault(section, []).append(line)
                 else:
@@ -46,6 +46,24 @@ def parse_config(filename: str, text: str) -> tuple[dict[str, dict[str, str]], d
         else:
             preserved.setdefault(section, []).append(line)
     return values, preserved
+
+
+def expand_asterisk_inheritance(values: dict[str, dict[str, str]],
+                                preserved: dict[str, list[str]]) -> None:
+    """Materialize simple Asterisk section inheritance before database import."""
+    sections = set(values) | set(preserved)
+    templates = {section[:-3]: section for section in sections if section.endswith("(!)")}
+    for section in list(sections):
+        match = re.fullmatch(r"(.+)\(([^()]*)\)", section)
+        if match is None or match.group(2) not in templates:
+            continue
+        parent = templates[match.group(2)]
+        child_values = values.setdefault(section, {})
+        for key, value in values.get(parent, {}).items():
+            child_values.setdefault(key, value)
+        parent_lines = preserved.get(parent, [])
+        child_lines = preserved.get(section, [])
+        preserved[section] = [*parent_lines, *child_lines]
 
 
 def _split_inline_comment(value: str) -> tuple[str, str | None]:

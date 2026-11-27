@@ -1,5 +1,7 @@
 services:
   demo:
+    init: true
+    stop_grace_period: 30s
     build: .
     image: asterisk-node-manager:local
     command: ["astnode-web"]

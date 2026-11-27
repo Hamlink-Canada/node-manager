@@ -30,6 +30,12 @@ def test_writer_rejects_invalid_json_and_unsupported_operations(tmp_path):
     assert deeply_nested_response["error"] in {"invalid JSON request", "unsupported operation"}
 
 
+def test_writer_shutdown_handler_exits_through_cleanup_path():
+    with pytest.raises(SystemExit) as exc_info:
+        writer._handle_shutdown(15, None)
+    assert exc_info.value.code == 0
+
+
 def test_writer_response_reader_handles_large_replies_and_rejects_empty_reply():
     class FakeSocket:
         def __init__(self, chunks):

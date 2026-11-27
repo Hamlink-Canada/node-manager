@@ -6,6 +6,7 @@ import grp
 import json
 import logging
 import os
+import signal
 import socket
 import stat
 import subprocess
@@ -24,6 +25,13 @@ DIAGNOSTIC_COMMANDS = {
     "core show version", "core show uptime", "core show channels",
     "iax2 show peers", "rpt show nodes", "module show",
 }
+
+
+def _handle_shutdown(signum, _frame):
+    logging.getLogger(__name__).info("Received signal %s; stopping writer", signum)
+    # SystemExit unwinds main()'s finally block, which closes and removes the
+    # Unix socket. The handler is required because this process may run as PID 1.
+    raise SystemExit(0)
 
 
 def handle_request(request: bytes, settings) -> dict:
@@ -136,6 +144,8 @@ def main() -> int:
             logging.getLogger(__name__).info("Loaded %d network profile files from %s",
                                              loaded_profiles, settings.network_profiles_directory)
     server, owns_socket_path = _open_server_socket(settings)
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
     try:
         # Reconcile interrupted publication before serving clients when a database exists.
         if not settings.demo_mode and database_exists(settings.database):

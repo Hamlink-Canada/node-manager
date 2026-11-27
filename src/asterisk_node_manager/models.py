@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -47,6 +48,7 @@ class Network(Base):
 
 class Node(Base):
     __tablename__ = "nodes"
+    __table_args__ = (CheckConstraint("node_number >= 1000", name="ck_nodes_node_number_min"),)
     id = Column(Integer, primary_key=True)
     node_number = Column(Integer, unique=True, nullable=False)
     name = Column(String(200), nullable=False)
@@ -97,6 +99,8 @@ class SimpleUSBSettings(Base):
     rxmixerset = Column(Integer, nullable=True)
     txmixaset = Column(Integer, nullable=True)
     txmixbset = Column(Integer, nullable=True)
+    devstr = Column(String(200), nullable=True)
+    serial = Column(String(200), nullable=True)
     node = relationship("Node", back_populates="simpleusb_settings")
 
 
@@ -153,6 +157,28 @@ class ConfigValue(Base):
     file_name = Column(String(200), nullable=False)
     section = Column(String(200), nullable=False, default="")
     key = Column(String(200), nullable=False)
+    default_value = Column(Text, nullable=False, default="")
+    updated_value = Column(Text, nullable=True)
+    secret = Column(Boolean, nullable=False, default=False)
+
+    @property
+    def value(self):
+        """Effective value: an explicit update, or the stored default."""
+        return self.updated_value if self.updated_value is not None else self.default_value
+
+    @value.setter
+    def value(self, value):
+        self.updated_value = value
+
+
+class CustomValue(Base):
+    """Parsed user edits, merged over primary configuration values at render time."""
+    __tablename__ = "custom_values"
+    __table_args__ = (UniqueConstraint("file_name", "section", "key"),)
+    id = Column(Integer, primary_key=True)
+    file_name = Column(String(200), nullable=False)
+    section = Column(String(200), nullable=False, default="")
+    key = Column(String(200), nullable=False)
     value = Column(Text, nullable=False)
     secret = Column(Boolean, nullable=False, default=False)
 
@@ -164,6 +190,81 @@ class CustomLine(Base):
     section = Column(String(200), nullable=False, default="")
     line_number = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
+    is_default = Column(Boolean, nullable=False, default=False)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+
+
+class ModuleDirective(Base):
+    """A module load rule with a retained built-in value and optional override."""
+    __tablename__ = "module_directives"
+    id = Column(Integer, primary_key=True)
+    section = Column(String(200), nullable=False, default="modules")
+    line_number = Column(Integer, nullable=False)
+    module = Column(String(255), nullable=False)
+    action = Column(String(10), nullable=False)
+    is_default = Column(Boolean, nullable=False, default=False)
+    is_custom = Column(Boolean, nullable=False, default=False)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    updated_module = Column(String(255), nullable=True)
+    updated_action = Column(String(10), nullable=True)
+
+    @property
+    def effective_module(self):
+        return self.updated_module if self.is_custom and self.updated_module else self.module
+
+    @property
+    def effective_action(self):
+        return self.updated_action if self.is_custom and self.updated_action else self.action
+
+    def revert_to_default(self) -> None:
+        self.updated_module = None
+        self.updated_action = None
+        self.is_custom = False
+        self.is_deleted = False
+
+
+class ExtensionRule(Base):
+    """Structured dialplan rule retaining the original rule for future reset."""
+    __tablename__ = "extension_rules"
+    id = Column(Integer, primary_key=True)
+    context = Column(String(200), nullable=False)
+    line_number = Column(Integer, nullable=False)
+    directive = Column(String(10), nullable=False)
+    extension = Column(String(255), nullable=True)
+    priority = Column(String(80), nullable=False)
+    application = Column(String(120), nullable=False)
+    arguments = Column(Text, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    is_custom = Column(Boolean, nullable=False, default=False)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    updated_directive = Column(String(10), nullable=True)
+    updated_extension = Column(String(255), nullable=True)
+    updated_priority = Column(String(80), nullable=True)
+    updated_application = Column(String(120), nullable=True)
+    updated_arguments = Column(Text, nullable=True)
+
+    def revert_to_default(self) -> None:
+        self.updated_directive = None
+        self.updated_extension = None
+        self.updated_priority = None
+        self.updated_application = None
+        self.updated_arguments = None
+        self.is_custom = False
+        self.is_deleted = False
+
+    def render(self) -> str:
+        overridden = self.is_default and self.is_custom
+        directive = self.updated_directive if overridden else self.directive
+        extension = self.updated_extension if overridden else self.extension
+        priority = self.updated_priority if overridden else self.priority
+        application = self.updated_application if overridden else self.application
+        arguments = self.updated_arguments if overridden else self.arguments
+        left = extension if directive.lower() == "exten" else None
+        parts = [part for part in (left, priority, application) if part is not None]
+        payload = ",".join(parts)
+        if arguments is not None:
+            payload += f"({arguments})"
+        return f"{directive} => {payload}"
 
 
 class Change(Base):

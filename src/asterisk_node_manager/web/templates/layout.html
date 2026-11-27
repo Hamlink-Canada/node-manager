@@ -32,7 +32,6 @@
             <button class="nav-link dropdown-toggle" type="button" id="nodesMenu" data-bs-toggle="dropdown" aria-expanded="false">Nodes</button>
             <ul class="dropdown-menu" aria-labelledby="nodesMenu">
               <li><a class="dropdown-item" href="{{ url_for('index') }}">Overview</a></li>
-              <li><a class="dropdown-item" href="{{ url_for('changes_page') }}">Recent changes</a></li>
               {% if is_writer() %}<li><a class="dropdown-item" href="{{ url_for('node_setup') }}">Guided node setup</a></li>{% endif %}
             </ul>
           </li>
@@ -53,6 +52,7 @@
             <ul class="dropdown-menu" aria-labelledby="toolsMenu">
               <li><a class="dropdown-item" href="{{ url_for('files') }}">Configuration files</a></li>
               <li><a class="dropdown-item" href="{{ url_for('diagnostics') }}">Diagnostics</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('changes_page') }}">Recent changes</a></li>
               {% if is_writer() %}<li><a class="dropdown-item" href="{{ url_for('backup_restore_page') }}">Backup &amp; Restore</a></li>{% endif %}
             </ul>
           </li>
