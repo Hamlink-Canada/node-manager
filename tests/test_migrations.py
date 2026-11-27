@@ -134,3 +134,45 @@ def test_network_migration_moves_recognized_profile_values_into_columns(tmp_path
             assert "config" not in {column["name"] for column in inspect(connection).get_columns("networks")}
     finally:
         engine.dispose()
+
+
+def test_downgrade_restores_usbradio_and_network_profile_values(tmp_path):
+    database = tmp_path / "downgrade.sqlite3"
+    config = _alembic_config(database)
+    upgrade_database(database)
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO nodes (node_number, name, network_id, enabled, rxchannel, duplex, "
+            "linktolink, hangtime, callerid) VALUES (1234, 'Radio', NULL, 1, 'Radio/1234', "
+            "0, 0, 0, '')"))
+        node_id = connection.execute(text(
+            "SELECT id FROM nodes WHERE node_number=1234")).scalar_one()
+        connection.execute(text(
+            "INSERT INTO usbradio_settings (node_id) VALUES (:node_id)"), {"node_id": node_id})
+        connection.execute(text(
+            "UPDATE usbradio_settings SET rxboost=0, rxdemod='speaker' WHERE node_id=:node_id"),
+            {"node_id": node_id})
+        connection.execute(text(
+            "UPDATE networks SET registration_method='iax', iax_registration_server='radio.example', "
+            "iax_registration_port=4570 WHERE stable_key='allstarlink'"))
+    engine.dispose()
+
+    command.downgrade(config, "0003_explicit_node_settings")
+    engine = create_engine(f"sqlite:///{database}")
+    try:
+        with engine.connect() as connection:
+            radio = dict(connection.execute(text(
+                "SELECT key, value FROM config_values WHERE file_name='usbradio.conf' "
+                "AND section='1234'")).all())
+            assert radio["rxboost"] == "no"
+            assert radio["rxdemod"] == "speaker"
+            legacy = json.loads(connection.execute(text(
+                "SELECT config FROM networks WHERE stable_key='allstarlink'")).scalar_one())
+            assert legacy["registration_method"] == "iax"
+            assert legacy["iax_registration_server"] == "radio.example"
+            assert legacy["iax_registration_port"] == 4570
+            assert connection.execute(text(
+                "SELECT schema_version FROM networks WHERE stable_key='allstarlink'")).scalar_one() == 1
+    finally:
+        engine.dispose()

@@ -2,6 +2,7 @@ from asterisk_node_manager import cli
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.models import Node
+from asterisk_node_manager.generate import render_database
 from asterisk_node_manager.migrate import upgrade_database
 import sqlite3
 
@@ -39,6 +40,26 @@ def test_import_commit_maps_known_fields_and_regenerates(monkeypatch, tmp_path):
             assert node.simpleusb_settings.rxmixerset == 632
             assert node.simpleusb_settings.rxboost is True
             assert session.query(Node).count() == 1
+    finally:
+        sessions.kw["bind"].dispose()
+
+
+def test_import_usbradio_without_rpt_section_selects_radio_and_renders(monkeypatch, tmp_path):
+    source = tmp_path / "existing"
+    source.mkdir()
+    (source / "usbradio.conf").write_text("[1234]\nrxdemod=speaker\n")
+    settings = Settings(database=tmp_path / "manager.sqlite3", asterisk_directory=tmp_path / "asterisk")
+    monkeypatch.setattr(cli, "_require_root", lambda: None)
+    monkeypatch.setattr("asterisk_node_manager.writer._replace_files", lambda *args: None)
+
+    assert cli._import_config(source, True, settings) == 0
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1234).one()
+            assert node.rxchannel == "Radio/1234"
+            assert node.usbradio_settings.rxdemod == "speaker"
+        assert "rxdemod = speaker" in render_database(settings.database)["usbradio.conf"].decode()
     finally:
         sessions.kw["bind"].dispose()
 

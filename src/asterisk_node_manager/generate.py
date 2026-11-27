@@ -61,6 +61,31 @@ def order_sections(sections: list[str]) -> list[str]:
     return ordered
 
 
+def _network_registration(line: str, profiles: dict[int, dict]) -> tuple[str, str, str] | None:
+    """Route a preserved numeric-node registration using that node's network profile."""
+    match = re.match(r"^\s*register\s*=>\s*(\d+):([^@]+)@([^\s;]+)(.*)$", line, re.IGNORECASE)
+    if match is None:
+        return None
+    node_number, password, old_server, suffix = match.groups()
+    profile = profiles.get(int(node_number))
+    if profile is None:
+        return None
+    method = profile.get("registration_method", "none")
+    if method == "none":
+        return ("", "", "")
+    if method == "http":
+        server = profile.get("http_registration_server") or old_server
+        return "rpt_http_registrations.conf", "registrations", \
+            f"register => {node_number}:{password}@{server}{suffix}"
+    if method == "iax":
+        server = profile.get("iax_registration_server") or old_server
+        port = profile.get("iax_registration_port", 4569)
+        server = re.sub(r":\d+$", "", server)
+        server = f"{server}:{port}"
+        return "iax.conf", "general", f"register => {node_number}:{password}@{server}{suffix}"
+    return None
+
+
 def render_database(database: str | Path, *, network_profiles_enabled: bool = False,
                     default_network: str = "allstarlink") -> dict[str, bytes]:
     templates = Environment(loader=PackageLoader("asterisk_node_manager", "conf"),
@@ -82,6 +107,7 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
         custom_lines = list(session.scalars(select(CustomLine).order_by(
             CustomLine.file_name, CustomLine.id)))
         nodes_context = []
+        node_profiles = {}
         usb_values = []
         radio_values = []
         for node in nodes:
@@ -91,7 +117,11 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                         and value.key not in node_config_values(node)}
             rpt_settings = {**node_config_values(node), **advanced}
             profile = network_fields(network) if network else {}
+            node_profiles[node.node_number] = profile
             if profile:
+                # A selected profile controls status reporting even when it disables it.
+                rpt_settings.pop("statpost_url", None)
+                rpt_settings.pop("statpost_time", None)
                 rpt_settings["node_lookup_method"] = profile["node_lookup_method"]
                 if profile["dns_node_domain"]:
                     rpt_settings["dns_node_domain"] = profile["dns_node_domain"]
@@ -122,6 +152,20 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
         for filename in GENERATED_FILES:
             values = [value for value in file_values if value.file_name == filename]
             custom = [line for line in custom_lines if line.file_name == filename]
+            if filename in {"iax.conf", "rpt_http_registrations.conf"}:
+                routed = []
+                for line in custom_lines:
+                    if not re.match(r"^\s*register\s*=>", line.content, re.IGNORECASE):
+                        continue
+                    destination = _network_registration(line.content, node_profiles)
+                    if destination is not None:
+                        routed.append((line, destination))
+                custom = [line for line in custom if not any(line is source for source, _ in routed)]
+                for source, destination in routed:
+                    target_file, section, content = destination
+                    if target_file == filename and content:
+                        custom.append(SimpleNamespace(section=section, content=content,
+                                                      line_number=source.line_number))
             template_name = f"{filename}.j2"
             if filename == "rpt.conf":
                 for node in nodes_context:

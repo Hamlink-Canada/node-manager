@@ -118,7 +118,7 @@ def parse_network_profile(value: object) -> dict:
                 raise ValueError(f"{key} must be a number")
             try:
                 raw = int(raw)
-            except (TypeError, ValueError):
+            except (OverflowError, TypeError, ValueError):
                 raise ValueError(f"{key} must be a whole number") from None
             if not definition["min"] <= raw <= definition["max"]:
                 raise ValueError(f"{key} must be from {definition['min']} to {definition['max']}")

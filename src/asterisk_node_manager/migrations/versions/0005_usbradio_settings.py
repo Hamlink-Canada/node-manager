@@ -89,4 +89,29 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    nodes = sa.table("nodes", sa.column("id", sa.Integer),
+                     sa.column("node_number", sa.Integer))
+    source = sa.table("usbradio_settings", sa.column("node_id", sa.Integer),
+                      *[sa.column(key, _type(default)) for key, default in DEFAULTS.items()])
+    values = sa.table("config_values", sa.column("file_name", sa.String),
+                      sa.column("section", sa.String), sa.column("key", sa.String),
+                      sa.column("value", sa.Text), sa.column("secret", sa.Boolean))
+    rows = bind.execute(sa.select(nodes.c.node_number, *[source.c[key] for key in DEFAULTS])
+                        .select_from(nodes.join(source, nodes.c.id == source.c.node_id))).fetchall()
+    for row in rows:
+        section = str(row.node_number)
+        for key, default in DEFAULTS.items():
+            value = row._mapping[key]
+            serialized = ("yes" if value else "no") if isinstance(default, bool) else str(value)
+            existing = bind.execute(sa.select(values.c.key).where(
+                values.c.file_name == "usbradio.conf", values.c.section == section,
+                values.c.key == key)).first()
+            if existing:
+                bind.execute(values.update().where(
+                    values.c.file_name == "usbradio.conf", values.c.section == section,
+                    values.c.key == key).values(value=serialized, secret=False))
+            else:
+                bind.execute(values.insert().values(file_name="usbradio.conf", section=section,
+                                                    key=key, value=serialized, secret=False))
     op.drop_table("usbradio_settings")

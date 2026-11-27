@@ -232,8 +232,11 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                     if section.isdigit():
                         node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
                         if node is None:
-                            node = Node(node_number=int(section), name=f"Node {section}")
+                            node = Node(node_number=int(section), name=f"Node {section}",
+                                        rxchannel=f"Radio/{section}")
                             db.add(node)
+                        elif node.rxchannel == "Local/pseudo":
+                            node.rxchannel = f"Radio/{section}"
                         if node.usbradio_settings is None:
                             node.usbradio_settings = USBRadioSettings()
                         apply_interface_config_values(node.usbradio_settings, "usbradio.conf", {

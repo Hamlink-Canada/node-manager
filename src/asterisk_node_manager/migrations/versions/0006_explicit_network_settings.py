@@ -93,5 +93,15 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.add_column("networks", sa.Column("config", sa.JSON(), nullable=False,
                                           server_default="{}"))
+    bind = op.get_bind()
+    networks = sa.table("networks", sa.column("id", sa.Integer),
+                        sa.column("schema_version", sa.Integer), sa.column("config", sa.JSON),
+                        *[sa.column(key, column_type) for key, (column_type, _) in COLUMNS.items()])
+    columns = [networks.c.id, networks.c.schema_version,
+               *[networks.c[key] for key in COLUMNS]]
+    for row in bind.execute(sa.select(*columns)).fetchall():
+        profile = {key: row._mapping[key] for key in COLUMNS}
+        bind.execute(networks.update().where(networks.c.id == row.id)
+                     .values(config=profile, schema_version=1))
     for key in reversed(tuple(COLUMNS)):
         op.drop_column("networks", key)

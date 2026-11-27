@@ -79,6 +79,8 @@ def test_startup_profile_scan_inserts_and_updates_by_key_and_skips_invalid(tmp_p
     (directory / "allstarlink.json").write_text(json.dumps(profile(
         "allstarlink", "Updated AllStarLink", http_registration_server="updated.invalid")))
     (directory / "invalid.json").write_text("not-json")
+    (directory / "overflow.json").write_text(json.dumps({**profile(
+        "overflow.example", "Overflow"), "iax_registration_port": 1e309}))
 
     assert load_network_profiles(directory, database) == 2
     sessions = session_factory(database)

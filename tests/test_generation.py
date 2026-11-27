@@ -82,6 +82,71 @@ def test_generation_uses_explicit_network_lookup_and_stats_settings(database):
     assert "statpost_time = 90" in rendered
 
 
+def test_generation_routes_registration_credentials_through_selected_profile(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            network = Network(
+                stable_key="example.net", name="Example", schema_version=2,
+                registration_method="http", http_registration_server="register.example.net",
+                iax_registration_server="", iax_registration_port=4569,
+                stats_enabled=False, stats_post_url="", stats_post_interval=60,
+                node_lookup_method="both", dns_node_domain="", max_dns_node_length=6,
+                external_node_file="",
+            )
+            session.add(network)
+            session.add(Node(node_number=4321, name="Network node", rxchannel="Local/pseudo"))
+            session.add(CustomLine(file_name="iax.conf", section="general", line_number=0,
+                                   content="register => 4321:keepsecret@old.example.net"))
+        files = render_database(database, default_network="example.net")
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "register => 4321:keepsecret@register.example.net" in files[
+        "rpt_http_registrations.conf"].decode()
+    assert "register => 4321:keepsecret@old.example.net" not in files["iax.conf"].decode()
+
+
+def test_generation_uses_iax_profile_server_and_port_for_registration(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            network = session.query(Network).filter_by(stable_key="allstarlink").one()
+            network.registration_method = "iax"
+            network.iax_registration_server = "iax.example.net"
+            network.iax_registration_port = 4570
+            session.add(Node(node_number=4321, name="Network node", rxchannel="Local/pseudo"))
+            session.add(CustomLine(file_name="rpt_http_registrations.conf", section="registrations",
+                                   line_number=0,
+                                   content="register => 4321:keepsecret@old.example.net"))
+        files = render_database(database)
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "register => 4321:keepsecret@iax.example.net:4570" in files["iax.conf"].decode()
+    assert "register => 4321:keepsecret@old.example.net" not in files[
+        "rpt_http_registrations.conf"].decode()
+
+
+def test_disabled_profile_status_removes_imported_status_values(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(Node(node_number=4321, name="Network node", rxchannel="Local/pseudo"))
+            session.add_all([
+                ConfigValue(file_name="rpt.conf", section="4321", key="statpost_url",
+                            value="https://old.example.net", secret=False),
+                ConfigValue(file_name="rpt.conf", section="4321", key="statpost_time",
+                            value="30", secret=False),
+            ])
+        rendered = render_database(database)["rpt.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "statpost_url" not in rendered
+    assert "statpost_time" not in rendered
+
+
 def test_inheritance_suffixes_survive_import_and_render(database):
     sessions = session_factory(database)
     source = "[alpha](zbase)\nexten => 100,1,Answer()\n\n[zbase](!)\npriorityjumping=no\n"
