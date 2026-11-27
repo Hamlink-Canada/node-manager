@@ -33,6 +33,7 @@ class LiveOperation(ABC):
     """Base contract implemented by each explicitly registered radio driver."""
 
     driver: str
+    module_name: str
     tuning_fields: dict[str, tuple[int, int]]
 
     def __init__(self, cli: AsteriskSocket):
@@ -49,6 +50,13 @@ class LiveOperation(ABC):
     @abstractmethod
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
         """Apply one validated live tuning value."""
+
+    def reload_driver(self) -> str:
+        """Reload only the registered channel driver module."""
+        result = self.cli.run(f"module reload {self.module_name}")
+        if any(marker in result.lower() for marker in ("reload failed", "unable to reload", "no such module")):
+            raise OperationError(result)
+        return result
 
 
 class AsteriskSocket:

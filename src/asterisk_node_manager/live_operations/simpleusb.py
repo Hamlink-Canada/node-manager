@@ -7,10 +7,13 @@ from .base import LiveOperation, OperationContext, OperationError, validate_devi
 
 class SimpleUSBOperations(LiveOperation):
     driver = "simpleusb"
+    module_name = "chan_simpleusb.so"
     tuning_fields = {"rx": (0, 999), "txa": (0, 999), "txb": (0, 999)}
 
     def list_devices(self) -> str:
-        return self.cli.run("susb active")
+        # `show` lists every device known to the channel driver, including
+        # the device string and ALSA card assigned to each configured node.
+        return self.cli.run("susb active show")
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)

@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .registry import execute_operation
+from .base import OperationError
+from .registry import DRIVERS, execute_operation
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class TaskRequest:
     device: str | None
     setting: str | None
     value: object
+    confirm_transmit: bool = False
 
 
 class LiveTaskQueue:
@@ -44,11 +46,24 @@ class LiveTaskQueue:
         self._queue: queue.Queue[TaskRequest] = queue.Queue(maxsize=QUEUE_CAPACITY)
         self._tasks: OrderedDict[str, dict] = OrderedDict()
         self._lock = threading.RLock()
+        self._demo_defaults = {
+            ("simpleusb", "1000"): {"rx": 500, "txa": 500, "txb": 500},
+            ("simpleusb", "1001"): {"rx": 500, "txa": 500, "txb": 500},
+            ("usbradio", "1002"): {
+                "rxlevel": 500, "rxsquelch": 500, "txvoice": 500, "txtone": 200,
+                "auxvoice": 500, "txslimsp": 9000,
+            },
+        }
+        self._demo_values = {key: value.copy() for key, value in self._demo_defaults.items()}
         self._thread = threading.Thread(target=self._work, name="asterisk-live-operations", daemon=True)
         self._thread.start()
 
     def submit(self, actor: str, driver: str, operation: str, node_number: int | None,
-               device: str | None, setting: str | None, value: object) -> dict:
+               device: str | None, setting: str | None, value: object,
+               confirm_transmit: bool = False) -> dict:
+        if driver == "usbradio" and operation == "set_value" \
+                and setting in {"txvoice", "txtone"} and not confirm_transmit:
+            raise OperationError("confirm_transmit is required because this setting keys the transmitter.")
         self._expire()
         task_id = uuid.uuid4().hex
         now = self.clock()
@@ -63,7 +78,8 @@ class LiveTaskQueue:
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "_updated_monotonic": now,
         }
-        task = TaskRequest(task_id, actor, driver, operation, node_number, device, setting, value)
+        task = TaskRequest(task_id, actor, driver, operation, node_number, device, setting, value,
+                           confirm_transmit)
         with self._lock:
             try:
                 self._queue.put_nowait(task)
@@ -98,6 +114,7 @@ class LiveTaskQueue:
             try:
                 if self.demo_mode:
                     result = self._mock(task)
+                    result["simulated"] = True
                 else:
                     result = execute_operation(self.asterisk_socket, task.driver, task.operation,
                                                task.node_number, task.device, task.setting, task.value)
@@ -109,6 +126,16 @@ class LiveTaskQueue:
                     if task.operation == "set_value":
                         record.update(persisted=False,
                                       warning=self._temporary_warning(task.driver, task.setting))
+                        if task.driver == "usbradio" and task.setting in {"txvoice", "txtone"}:
+                            record["transmission_warning"] = (
+                                "This operation keys the transmitter and sends a 1 kHz test tone "
+                                "for about five seconds."
+                            )
+                    elif task.operation == "reload_driver":
+                        record["warning"] = (
+                            "Reloading the driver reapplies saved configuration and can discard "
+                            "unsaved live tuning changes."
+                        )
                     self._trim()
                 self._audit("succeeded", record)
             except Exception as exc:
@@ -122,15 +149,75 @@ class LiveTaskQueue:
             finally:
                 self._queue.task_done()
 
-    @staticmethod
-    def _mock(task: TaskRequest) -> dict:
+    def _mock(self, task: TaskRequest) -> dict:
         if task.operation == "list_devices":
-            return {"output": f"Demo {task.driver} interface: demo-device (Node {task.node_number or 'unassigned'})"}
+            if task.driver == "simpleusb":
+                return {"output": (
+                    "Device [1000] is assigned to device=hw:2,0 card=2\n"
+                    "Device [1001] is assigned to device=unassigned card=-1"
+                )}
+            return {"output": "Device [1002] is assigned to device=hw:3,0 card=3"}
+        if task.operation == "reload_driver":
+            self._demo_values.update({
+                key: value.copy() for key, value in self._demo_defaults.items()
+                if key[0] == task.driver
+            })
+            module = "chan_simpleusb.so" if task.driver == "simpleusb" else "chan_usbradio.so"
+            return {"output": f"Module '{module}' reloaded successfully."}
+        values = self._demo_values.setdefault(
+            (task.driver, str(task.node_number or task.device or "1000")),
+            self._demo_defaults.get((task.driver, str(task.node_number or task.device or "1000")), {}).copy(),
+        )
         if task.operation == "read_settings":
-            values = ("rx=500, txa=500, txb=500" if task.driver == "simpleusb"
-                      else "rxsquelch=500, txvoice=500, txtone=500, auxvoice=500, txslimsp=9000")
-            return {"output": f"Demo tuning settings: {values}"}
-        return {"output": f"Demo only: {task.driver} {task.setting} would be set to {task.value}; no Asterisk connection was made."}
+            if task.driver == "simpleusb":
+                return {"output": (
+                    f"Active radio interface is [{task.device}]\n"
+                    "Device String is hw:2,0\n"
+                    f"Device Serial is DEMO-SIMPLEUSB-{task.device}\n"
+                    "Card is 2\n"
+                    f"Rx Level currently set to {values['rx']}\n"
+                    f"Tx A Level currently set to {values['txa']}\n"
+                    f"Tx B Level currently set to {values['txb']}"
+                )}
+            return {"output": (
+                f"Active radio interface is [{task.device}]\n"
+                "Device String is hw:3,0\n"
+                f"Device Serial is DEMO-USBRADIO-{task.device}\n"
+                "Card is 3\n"
+                "Output A is currently set to voice.\n"
+                "Output B is currently set to auxvoice.\n"
+                f"Rx Level currently set to {values['rxlevel']}\n"
+                f"Rx Squelch currently set to {values['rxsquelch']}\n"
+                f"Tx Voice Level currently set to {values['txvoice']}\n"
+                f"Tx Tone Level currently set to {values['txtone']}\n"
+                f"Current tx limiter setpoint: {values['txslimsp']}"
+            )}
+        setting = task.setting or ""
+        fields = DRIVERS[task.driver].tuning_fields
+        if setting not in fields:
+            raise OperationError(f"Unsupported {task.driver} tuning setting: {setting}.")
+        minimum, maximum = fields[setting]
+        if isinstance(task.value, bool) or not isinstance(task.value, int) \
+                or not minimum <= task.value <= maximum:
+            raise OperationError(f"{setting} must be an integer from {minimum} to {maximum}.")
+        if task.driver == "simpleusb":
+            values[setting] = task.value
+            labels = {"rx": "RX Channel", "txa": "TX Channel A", "txb": "TX Channel B"}
+            return {"output": f"Changed setting on {labels[setting]} to {task.value}"}
+        values[setting] = task.value
+        outputs = {
+            "rxsquelch": f"Changed Squelch setting to {task.value}",
+            "txvoice": (
+                f"Changed txvoice setting on Channel A to {task.value}\n"
+                f"Changed Tx Voice Output setting to {task.value}\n"
+                f"Tone output starting on channel {task.device}...\n"
+                f"Tone output ending on channel {task.device}..."
+            ),
+            "txtone": f"Changed Tx CTCSS modulation setting to {task.value}",
+            "auxvoice": f"Changed auxvoice setting on Channel B to {task.value}",
+            "txslimsp": f"Current tx limiter setpoint: {task.value}",
+        }
+        return {"output": outputs[setting]}
 
     @staticmethod
     def _temporary_warning(driver: str, setting: str | None) -> str:
@@ -139,6 +226,9 @@ class LiveTaskQueue:
             ("simpleusb", "txa"): "txmixaset",
             ("simpleusb", "txb"): "txmixbset",
             ("usbradio", "rxsquelch"): "rxsquelchadj",
+            ("usbradio", "txvoice"): "txmixaset or txmixbset, based on the configured output",
+            ("usbradio", "txtone"): "txctcssadj",
+            ("usbradio", "auxvoice"): "txmixaset or txmixbset, based on the configured output",
         }
         saved_key = persistent_keys.get((driver, setting))
         if saved_key is not None:

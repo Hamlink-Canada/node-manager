@@ -7,6 +7,7 @@ from .base import LiveOperation, OperationContext, OperationError, validate_devi
 
 class USBRadioOperations(LiveOperation):
     driver = "usbradio"
+    module_name = "chan_usbradio.so"
     tuning_fields = {
         "rxsquelch": (0, 999),
         "txvoice": (0, 999),
@@ -16,12 +17,16 @@ class USBRadioOperations(LiveOperation):
     }
 
     def list_devices(self) -> str:
-        return self.cli.run("radio active")
+        return self.cli.run("radio active show")
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)
         self.cli.run(f"radio active {device}")
-        return self.cli.run("radio show settings")
+        settings = self.cli.run("radio show settings")
+        # `radio show settings` omits the configurable soft-limiter setpoint;
+        # the no-argument query is read-only and reports its current value.
+        limiter = self.cli.run("radio tune txslimsp")
+        return "\n".join(part for part in (settings, limiter) if part)
 
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
         if setting not in self.tuning_fields:
@@ -31,4 +36,9 @@ class USBRadioOperations(LiveOperation):
             raise OperationError(f"{setting} must be an integer from {minimum} to {maximum}.")
         device = validate_device(context.device)
         self.cli.run(f"radio active {device}")
-        return self.cli.run(f"radio tune {setting} {value}")
+        result = self.cli.run(f"radio tune {setting} {value}")
+        if setting == "txslimsp":
+            # This command changes the limiter without printing a success
+            # message, so read its value back for a useful task result.
+            result = self.cli.run("radio tune txslimsp")
+        return result

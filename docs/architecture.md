@@ -55,8 +55,10 @@ clears these results. Audit events include the actor, Node Number, operation,
 driver and outcome in service logs; deployment logging must retain and rotate
 those logs. Demo mode returns mock operation results and never connects to
 Asterisk. Live tuning changes are temporary; save the desired values
-through the web app to persist them. An Asterisk reload reverts unsaved live
-changes, and the manager does not request reloads.
+through the web app to persist them. An explicit API request can reload the
+selected USB channel driver after configuration publication; configuration
+generation does not request a reload automatically. A driver reload reapplies
+saved configuration and can replace unsaved live changes.
 The writer reconciles the database to the generated files when it starts, and
 the web service requests a fresh generation before it begins listening. This
 repairs an interrupted file publication or a process restart from the current

@@ -799,7 +799,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.get("/api/live-operations")
     @write_required
     def live_operation_catalog():
-        return {"drivers": operation_names(), "operations": ["list_devices", "read_settings", "set_value"]}
+        return {"drivers": operation_names(),
+                "operations": ["list_devices", "read_settings", "set_value", "reload_driver"],
+                "transmit_confirmation_required": {"usbradio": ["txvoice", "txtone"]}}
 
     @app.post("/api/live-operations")
     @write_required
@@ -815,22 +817,23 @@ def create_app(settings: Settings | None = None) -> Flask:
             payload = None
         if not isinstance(payload, dict):
             return jsonify(error="A JSON object is required."), 400
-        allowed = {"driver", "operation", "node_number", "setting", "value"}
+        allowed = {"driver", "operation", "node_number", "setting", "value", "confirm_transmit"}
         if set(payload) - allowed:
             return jsonify(error="Unknown request fields are not allowed."), 400
         driver = payload.get("driver")
         operation = payload.get("operation")
         if not isinstance(driver, str) or driver not in {"simpleusb", "usbradio"}:
             return jsonify(error="driver must be 'simpleusb' or 'usbradio'."), 400
-        if not isinstance(operation, str) or operation not in {"list_devices", "read_settings", "set_value"}:
-            return jsonify(error="operation must be list_devices, read_settings, or set_value."), 400
+        if not isinstance(operation, str) or operation not in {
+                "list_devices", "read_settings", "set_value", "reload_driver"}:
+            return jsonify(error="operation must be list_devices, read_settings, set_value, or reload_driver."), 400
         node_number = payload.get("node_number")
         device = None
         if node_number is not None and (isinstance(node_number, bool)
                                         or not isinstance(node_number, int)
                                         or not 1000 <= node_number <= 2**63 - 1):
             return jsonify(error="node_number must be an integer from 1000 to 2^63 - 1."), 400
-        if operation != "list_devices":
+        if operation not in {"list_devices", "reload_driver"}:
             if node_number is None:
                 return jsonify(error="node_number must be an integer from 1000 to 2^63 - 1."), 400
             with sessions() as db:
@@ -845,9 +848,19 @@ def create_app(settings: Settings | None = None) -> Flask:
         if operation == "set_value":
             if not isinstance(payload.get("setting"), str) or "value" not in payload:
                 return jsonify(error="set_value requires setting and value."), 400
+            confirm_transmit = payload.get("confirm_transmit", False)
+            if not isinstance(confirm_transmit, bool):
+                return jsonify(error="confirm_transmit must be a boolean."), 400
+            if driver == "usbradio" and payload["setting"] in {"txvoice", "txtone"} \
+                    and confirm_transmit is not True:
+                return jsonify(error=("confirm_transmit must be true because this USBRadio "
+                                      "operation keys the transmitter.")), 400
+        elif payload.get("confirm_transmit", False) is not False:
+            return jsonify(error="confirm_transmit is only accepted for set_value."), 400
         try:
             task = live_tasks.submit(current_user() or "", driver, operation, node_number,
-                                     device, payload.get("setting"), payload.get("value"))
+                                     device, payload.get("setting"), payload.get("value"),
+                                     payload.get("confirm_transmit", False))
         except queue.Full as exc:
             return jsonify(error=str(exc)), 503, {"Retry-After": "2"}
         return jsonify(task), 202
