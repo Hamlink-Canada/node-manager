@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from sqlalchemy import select
 
-from .configuration import node_config_values, node_fields_for_file, usbradio_config_values
+from .configuration import (interface_config_values, node_config_values,
+                            node_fields_for_file, usbradio_config_values)
 from .database import session_factory
 from .models import ConfigValue, CustomLine, Network, Node, Setting
 from .networks import network_fields
@@ -152,16 +153,15 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                 "settings": rpt_settings,
                 "network_key": network.stable_key if network else None,
             })
-            if node.rxchannel.startswith("SimpleUSB/") and node.simpleusb_settings:
+            rxchannel = rpt_settings["rxchannel"]
+            if rxchannel.startswith("SimpleUSB/") and node.simpleusb_settings:
                 typed = node.simpleusb_settings
-                for key in simpleusb_fields:
-                    value = getattr(typed, key)
-                    usb_values.append(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
-                                                      value=("yes" if value else "no") if isinstance(value, bool)
-                                                      else str(value), secret=False))
-            if node.rxchannel.startswith("Radio/") and node.usbradio_settings:
-                radio_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key, value=value,
-                                                     secret=False)
+                usb_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
+                                                  value=value, secret=False)
+                                  for key, value in interface_config_values(typed, "simpleusb.conf").items())
+            if rxchannel.startswith("Radio/") and node.usbradio_settings:
+                radio_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
+                                                    value=value, secret=False)
                                     for key, value in usbradio_config_values(node.usbradio_settings).items())
         for filename in GENERATED_FILES:
             base_values, base_custom = _base_configuration(filename)
@@ -227,9 +227,9 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                     values.sort(key=lambda value: (value.section, value.key))
                 elif filename == "modules.conf":
                     active_drivers = {
-                        "chan_simpleusb.so": any(node.rxchannel.startswith("SimpleUSB/") for node in nodes),
-                        "chan_usbradio.so": any(node.rxchannel.startswith("Radio/") for node in nodes),
-                        "chan_voter.so": any(node.rxchannel.startswith("Voter/") for node in nodes),
+                        "chan_simpleusb.so": any(node_config_values(node)["rxchannel"].startswith("SimpleUSB/") for node in nodes),
+                        "chan_usbradio.so": any(node_config_values(node)["rxchannel"].startswith("Radio/") for node in nodes),
+                        "chan_voter.so": any(node_config_values(node)["rxchannel"].startswith("Voter/") for node in nodes),
                     }
                     rewritten = []
                     for line in custom:

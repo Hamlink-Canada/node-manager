@@ -17,7 +17,7 @@ from .asterisk_config import is_secret_key, parse_config
 from .migrate import upgrade_database, validate_database_backup
 from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings, USBRadioSettings
 from .configuration import (NODE_CONFIG_FIELDS, apply_interface_config_values,
-                            apply_node_config_values, node_fields_for_file)
+                            apply_node_config_values, node_config_values, node_fields_for_file)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -235,7 +235,7 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                             node = Node(node_number=int(section), name=f"Node {section}",
                                         rxchannel=f"Radio/{section}")
                             db.add(node)
-                        elif node.rxchannel == "Local/pseudo":
+                        elif node_config_values(node)["rxchannel"] == "Local/pseudo":
                             node.rxchannel = f"Radio/{section}"
                         if node.usbradio_settings is None:
                             node.usbradio_settings = USBRadioSettings()

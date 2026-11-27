@@ -5,19 +5,30 @@
 <form method="post" action="{{ url_for('create_network') }}" class="card shadow-sm">
   <div class="card-body">
     <div class="row g-3 mb-4">
-      <div class="col-md-6"><label class="form-label" for="network-key">Stable key</label><input class="form-control" id="network-key" name="key" pattern="[a-zA-Z0-9._-]+" maxlength="120" required><div class="form-text">A stable identifier used when updating this profile from a JSON file.</div></div>
-      <div class="col-md-6"><label class="form-label" for="network-name">Network name</label><input class="form-control" id="network-name" name="name" maxlength="200" required></div>
+      <div class="col-md-6"><label class="form-label" for="network-key">Stable key <span class="text-danger">(Required)</span></label><input class="form-control" id="network-key" name="key" pattern="[a-zA-Z0-9._-]+" maxlength="120" required><div class="form-text">A stable identifier used when updating this profile from a JSON file. No default.</div></div>
+      <div class="col-md-6"><label class="form-label" for="network-name">Network name <span class="text-danger">(Required)</span></label><input class="form-control" id="network-name" name="name" maxlength="200" required><div class="form-text">No default.</div></div>
     </div>
     <div class="row g-3">
       {% for field in fields %}<div class="col-md-6">
         <label class="form-label" for="field-{{ field.key }}">{{ field.label }}</label>
         {% if field.type == 'choice' %}<select class="form-select" id="field-{{ field.key }}" name="{{ field.key }}" required>{% for value, label in field.choices %}<option value="{{ value }}" {% if values[field.key] == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
         {% elif field.type == 'boolean' %}<select class="form-select" id="field-{{ field.key }}" name="{{ field.key }}"><option value="true" {% if values[field.key] %}selected{% endif %}>Yes</option><option value="false" {% if not values[field.key] %}selected{% endif %}>No</option></select>
-        {% else %}<input class="form-control" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ values[field.key] }}" type="{{ 'number' if field.type == 'number' else 'url' if field.type == 'url' else 'text' }}" {% if field.type == 'number' %}min="{{ field.min }}" max="{{ field.max }}" step="1"{% endif %} maxlength="{{ 500 if field.key in ('stats_post_url', 'external_node_file') else 255 }}">{% endif %}
-        <div class="form-text">{{ field.help }}</div>
+        {% else %}<div class="input-group"><input class="form-control" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ values[field.key] }}" data-default="{{ values[field.key] }}" type="{{ 'number' if field.type == 'number' else 'url' if field.type == 'url' else 'text' }}" {% if field.type == 'number' %}min="{{ field.min }}" max="{{ field.max }}" step="1"{% endif %} maxlength="{{ 500 if field.key in ('stats_post_url', 'external_node_file') else 255 }}">{% if field.type in ('text', 'url', 'number') %}<button class="btn btn-outline-secondary" type="button" data-reset-default="field-{{ field.key }}" aria-label="Reset {{ field.label }} to its default" title="Reset to default">×</button>{% endif %}</div>{% endif %}
+        <div class="form-text">{{ field.help }} Default: <code>{{ values[field.key] if values[field.key]|string else '(blank)' }}</code>.</div>
       </div>{% endfor %}
     </div>
   </div>
   <div class="card-footer bg-white d-flex justify-content-between"><a class="btn btn-outline-secondary" href="{{ url_for('networks_page') }}">Cancel</a><button class="btn btn-primary" type="submit">Review network</button></div>
 </form>
 {% endblock %}
+{% block scripts %}<script>
+document.querySelectorAll('[data-reset-default]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const field = document.getElementById(button.dataset.resetDefault);
+    if (!field) return;
+    field.value = field.dataset.default ?? '';
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+});
+</script>{% endblock %}

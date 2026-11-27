@@ -145,7 +145,9 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
         key = definition["key"]
         interface_prefix = {"SimpleUSB": "simpleusb", "Radio": "usbradio"}.get(interface)
         form_key = f"{interface_prefix}_{key}" if interface_prefix else key
-        value = str(settings.get(form_key, settings.get(key, definition["default"])))
+        default = definition.get("default", "")
+        configured = settings.get(form_key, settings.get(key, default))
+        value = str(default if configured is None else configured)
         kind = definition["kind"]
         existing_number = None
         if kind == "number":
@@ -178,6 +180,9 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
             "label": _message(f"field_{message_prefix}{key}", locale, catalog, english),
             "help": _message(f"help_{message_prefix}{key}", locale, catalog, english),
             "value": value,
+            "default_value": str(default),
+            "required": definition.get("required", False),
+            "has_default": "default" in definition,
             "choices": choices,
             "advanced": advanced,
             "browser_max": max(definition.get("max", 0), existing_number) if existing_number is not None else definition.get("max"),
@@ -199,9 +204,24 @@ def node_fields_for_file(file_name: str) -> set[str]:
 
 def usbradio_config_values(settings) -> dict[str, str]:
     """Return typed USBRadio fields as the strings written to usbradio.conf."""
-    return {key: ("yes" if getattr(settings, key) else "no")
-            if isinstance(getattr(settings, key), bool) else str(getattr(settings, key))
-            for key in node_fields_for_file("usbradio.conf")}
+    return interface_config_values(settings, "usbradio.conf")
+
+
+def interface_config_values(settings, file_name: str) -> dict[str, str]:
+    """Return explicit interface overrides with declared defaults filled in."""
+    definitions = {field["key"]: field for field in _FIELD_DEFINITIONS
+                   if field.get("file") == file_name}
+    result = {}
+    for key in node_fields_for_file(file_name):
+        definition = definitions[key]
+        value = getattr(settings, key, None)
+        if value is None:
+            if "default" not in definition:
+                continue
+            result[key] = str(definition["default"])
+            continue
+        result[key] = ("yes" if value else "no") if definition["kind"] == "boolean" else str(value)
+    return result
 
 
 def apply_interface_config_values(settings, file_name: str, values: dict[str, str]) -> None:
@@ -214,10 +234,18 @@ def apply_interface_config_values(settings, file_name: str, values: dict[str, st
             continue
         kind = definition["kind"]
         value = raw
+        if "default" not in definition and value == "":
+            setattr(settings, key, None)
+            continue
         if kind == "boolean":
             value = str(raw).lower() in {"yes", "true", "1", "on"}
         elif kind == "number" or kind == "choice" and raw.isdigit():
             value = int(raw)
+        if "default" in definition:
+            canonical = ("yes" if value else "no") if kind == "boolean" else str(value)
+            if canonical == str(definition["default"]):
+                setattr(settings, key, None)
+                continue
         setattr(settings, key, value)
 
 
@@ -226,6 +254,11 @@ def node_config_values(node) -> dict[str, str]:
     result = {}
     for key, definition in NODE_CONFIG_FIELDS.items():
         value = getattr(node, key)
+        if value is None:
+            if "default" not in definition:
+                continue
+            result[key] = str(definition["default"])
+            continue
         if definition["kind"] == "boolean":
             result[key] = "yes" if value else "no"
         else:
@@ -239,10 +272,18 @@ def apply_node_config_values(node, values: dict[str, str]) -> None:
         definition = NODE_CONFIG_FIELDS.get(key)
         if definition is None:
             continue
+        if "default" not in definition and value == "":
+            setattr(node, key, None)
+            continue
         if definition["kind"] == "boolean":
             value = str(value).lower() in {"yes", "true", "1", "on"}
         elif definition["kind"] == "number" or definition["kind"] == "choice" and key in {"duplex", "telemdefault", "parrot"}:
             value = int(value)
+        if "default" in definition:
+            canonical = ("yes" if value else "no") if definition["kind"] == "boolean" else str(value)
+            if canonical == str(definition["default"]):
+                setattr(node, key, None)
+                continue
         setattr(node, key, value)
 
 
@@ -259,7 +300,19 @@ def validate_node_settings(form, node_number: int, existing: dict[str, str] | No
         previous = existing.get(form_key, existing.get(key))
         raw = form.get(form_key, form.get(key, ""))
         if form_key not in form and key not in form:
-            values[form_key] = existing.get(form_key, existing.get(key, definition["default"]))
+            previous_value = existing.get(form_key, existing.get(key, definition.get("default", "")))
+            if previous_value is None:
+                previous_value = definition.get("default", "")
+            if definition.get("required", False) and not str(previous_value).strip():
+                errors[form_key] = "This field is required."
+                continue
+            values[form_key] = previous_value
+            continue
+        if raw is None:
+            raw = ""
+        raw = str(raw)
+        if raw == "" and definition.get("required", False):
+            errors[form_key] = "This field is required."
             continue
         if kind == "channel":
             allowed = {"Local/pseudo", f"SimpleUSB/{node_number}", f"Radio/{node_number}",

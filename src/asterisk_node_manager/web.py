@@ -32,13 +32,14 @@ from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, Sim
 from .migrate import upgrade_database
 from .demo import DEMO_USERNAME, initialize_demo
 from .networks import (NETWORK_DEFAULTS, NETWORK_FIELD_DEFINITIONS, load_network_profiles,
-                       network_fields, parse_network_profile)
+                       network_fields, network_overrides, parse_network_profile)
 from . import __version__
 from .configuration import (
     NODE_CONFIG_FIELDS,
     apply_interface_config_values,
     apply_node_config_values,
     available_locales,
+    interface_config_values,
     node_field_groups,
     node_config_values,
     node_fields_for_file,
@@ -366,17 +367,15 @@ def create_app(settings: Settings | None = None) -> Flask:
                 if value.key not in NODE_CONFIG_FIELDS:
                     existing[value.key] = value.value
             if node.simpleusb_settings:
-                for key in node_fields_for_file("simpleusb.conf"):
-                    value = getattr(node.simpleusb_settings, key)
-                    existing[f"simpleusb_{key}"] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
+                existing.update({f"simpleusb_{key}": value for key, value in
+                                 interface_config_values(node.simpleusb_settings, "simpleusb.conf").items()})
             simpleusb_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "simpleusb.conf",
                 ConfigValue.section == str(node_number))).all()
             existing.update({f"simpleusb_{value.key}": value.value for value in simpleusb_values})
             if node.usbradio_settings:
-                for key in node_fields_for_file("usbradio.conf"):
-                    value = getattr(node.usbradio_settings, key)
-                    existing[f"usbradio_{key}"] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
+                existing.update({f"usbradio_{key}": value for key, value in
+                                 interface_config_values(node.usbradio_settings, "usbradio.conf").items()})
             usbradio_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "usbradio.conf",
                 ConfigValue.section == str(node_number))).all()
@@ -555,12 +554,11 @@ def create_app(settings: Settings | None = None) -> Flask:
             network = db.scalar(select(Network).where(Network.stable_key == stable_key))
             if network is None:
                 network = Network(stable_key=stable_key, name=name.strip(), schema_version=2,
-                                  **network_fields(profile))
+                                  **network_overrides(profile))
                 db.add(network)
             else:
                 network.name, network.schema_version = name.strip(), 2
-                for key, value in network_fields(profile).items():
-                    setattr(network, key, value)
+                _store_network_overrides(network, profile)
             _record_change(db, current_user() or "", f"Imported network profile {name.strip()}",
                            {"record": "network", "stable_key": stable_key, "operation": "upsert"})
         dispose_database_engine(settings.database)
@@ -583,7 +581,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                                    field_definitions=NETWORK_FIELD_DEFINITIONS)
         with sessions.begin() as db:
             db.add(Network(stable_key=stable_key, name=name, schema_version=2,
-                           **network_fields(profile)))
+                           **network_overrides(profile)))
             _record_change(db, current_user() or "", f"Added network profile {name}",
                            {"record": "network", "stable_key": stable_key, "operation": "create"})
         dispose_database_engine(settings.database)
@@ -847,6 +845,12 @@ def _network_profile_from_form(form) -> dict:
         return parse_network_profile(profile)
     except ValueError as exc:
         abort(400, str(exc))
+
+
+def _store_network_overrides(network: Network, profile: dict) -> None:
+    overrides = network_overrides(profile)
+    for key in NETWORK_DEFAULTS:
+        setattr(network, key, overrides.get(key))
 
 
 def _read_writer_response(client: socket.socket) -> dict:

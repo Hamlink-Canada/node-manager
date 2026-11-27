@@ -1,5 +1,7 @@
 from asterisk_node_manager.configuration import (
+    apply_interface_config_values,
     apply_node_config_values,
+    interface_config_values,
     node_config_values,
     node_field_groups,
     validate_node_settings,
@@ -21,6 +23,49 @@ def test_configuration_hides_simpleusb_fields_when_another_channel_is_selected()
     groups = node_field_groups(1234, {"rxchannel": "Local/pseudo"})
     assert not any(field.get("file") == "simpleusb.conf"
                    for group in groups for field in group["fields"])
+
+
+def test_defaults_are_displayed_and_saved_as_sparse_overrides(monkeypatch):
+    import asterisk_node_manager.configuration as configuration
+
+    required_field = {"key": "required_fixture", "group": "required_fixture",
+                      "kind": "text", "required": True, "max": 40}
+    monkeypatch.setattr(configuration, "_FIELD_DEFINITIONS",
+                        (*configuration._FIELD_DEFINITIONS, required_field))
+    fields = {field["key"]: field for group in node_field_groups(1234, {})
+              for field in group["fields"]}
+    assert fields["hangtime"]["value"] == "5000"
+    assert fields["hangtime"]["default_value"] == "5000"
+    assert fields["hangtime"]["has_default"] is True
+    assert fields["required_fixture"]["value"] == ""
+    assert fields["required_fixture"]["has_default"] is False
+    assert fields["required_fixture"]["required"] is True
+    values, errors = validate_node_settings({}, 1234)
+    assert values is None
+    assert errors["required_fixture"] == "This field is required."
+    _, errors = validate_node_settings({"required_fixture": ""}, 1234)
+    assert errors["required_fixture"] == "This field is required."
+
+    node = Node(node_number=1234, name="Node 1234")
+    apply_node_config_values(node, {"hangtime": "5000", "linktolink": "no"})
+    assert node.hangtime is None
+    assert node.linktolink is None
+    assert node_config_values(node)["hangtime"] == "5000"
+    assert node_config_values(node)["linktolink"] == "no"
+
+
+def test_radio_interface_defaults_are_sparse_and_restored_for_display():
+    from asterisk_node_manager.models import USBRadioSettings
+
+    radio = USBRadioSettings()
+    apply_interface_config_values(radio, "usbradio.conf", {
+        "rxboost": "yes", "rxvoiceadj": "0.5", "txctcssdefault": "100.0",
+    })
+    assert radio.rxboost is None
+    assert radio.rxvoiceadj is None
+    values = interface_config_values(radio, "usbradio.conf")
+    assert values["rxboost"] == "yes"
+    assert values["rxvoiceadj"] == "0.5"
 
 
 def test_configuration_exposes_radio_fields_and_can_build_both_switchable_panels():

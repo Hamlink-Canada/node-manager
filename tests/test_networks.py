@@ -4,7 +4,9 @@ from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.migrate import upgrade_database
 from asterisk_node_manager.models import Network
-from asterisk_node_manager.networks import load_network_profiles, parse_network_profile
+from asterisk_node_manager.networks import (NETWORK_DEFAULTS, load_network_profiles,
+                                            network_fields, network_overrides,
+                                            parse_network_profile)
 from asterisk_node_manager.web import create_app
 
 
@@ -47,6 +49,14 @@ def test_network_profile_requires_explicit_registration_stats_and_lookup_fields(
         assert "schema" in str(exc).lower()
     else:
         raise AssertionError("opaque profile config should be rejected")
+
+
+def test_network_defaults_are_displayed_without_being_stored_as_overrides():
+    assert network_fields(None) == NETWORK_DEFAULTS
+    values = profile("sparse.example", "Sparse")
+    assert network_overrides(values) == {}
+    values["http_registration_server"] = "register.example.net"
+    assert network_overrides(values) == {"http_registration_server": "register.example.net"}
 
 
 def test_network_profile_rejects_unsafe_hosts_and_stats_urls():

@@ -64,8 +64,16 @@ def network_fields(profile: dict | object | None = None) -> dict:
     result = {}
     for key, default in NETWORK_DEFAULTS.items():
         value = profile.get(key, default) if isinstance(profile, dict) else getattr(profile, key, default)
+        if value is None:
+            value = default
         result[key] = value
     return result
+
+
+def network_overrides(profile: dict | object) -> dict:
+    """Return only values that differ from the network field defaults."""
+    return {key: value for key, value in network_fields(profile).items()
+            if value != NETWORK_DEFAULTS[key]}
 
 
 def _validate_host(value: str, field_name: str, allow_port: bool = False) -> str:
@@ -168,13 +176,14 @@ def load_network_profiles(directory: str | Path, database: str | Path) -> int:
                 network = db.scalar(select(Network).where(Network.stable_key == profile["key"]))
                 if network is None:
                     network = Network(stable_key=profile["key"], name=profile["name"],
-                                      schema_version=2, **network_fields(profile))
+                                      schema_version=2, **network_overrides(profile))
                     db.add(network)
                 else:
                     network.name = profile["name"]
                     network.schema_version = 2
-                    for key, value in network_fields(profile).items():
-                        setattr(network, key, value)
+                    overrides = network_overrides(profile)
+                    for key in NETWORK_DEFAULTS:
+                        setattr(network, key, overrides.get(key))
                 imported += 1
     finally:
         if not is_memory_database(database):

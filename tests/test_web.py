@@ -53,6 +53,8 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         response = client.get(f"/nodes/{node_id}/configuration")
         assert response.status_code == 200
         assert b"Advanced settings" in response.data
+        assert b'data-reset-default="field-hangtime"' in response.data
+        assert b'Default: <code>5000</code>' in response.data
         assert b'data-interface-panel="SimpleUSB"' in response.data
         assert b'data-interface-panel="Radio" hidden' in response.data
         assert b'name="usbradio_rxdemod"' in response.data
@@ -61,6 +63,10 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
             "linktolink": "yes", "advanced_view": "yes",
         })
         assert saved.status_code == 302
+        with sessions() as session:
+            node = session.get(Node, node_id)
+            assert node.hangtime is None
+            assert node.duplex == 0
         generated_rpt = (settings.demo_output_directory / "rpt.conf").read_text()
         assert "linktolink = yes" in generated_rpt
         assert "duplex = 0" in generated_rpt
@@ -145,7 +151,7 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
             node = session.query(Node).filter_by(node_number=2345).one()
             assert node.name == "Workshop Repeater"
             assert node.rxchannel == "SimpleUSB/2345"
-            assert node.duplex == 2
+            assert node.duplex is None
             assert node.idrecording == "|iVE3ABC"
             assert node.simpleusb_settings is not None
 
@@ -180,7 +186,7 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
         assert hub.status_code == 302
         with sessions() as session:
             hub_node = session.query(Node).filter_by(node_number=2346).one()
-            assert hub_node.rxchannel == "Local/pseudo"
+            assert hub_node.rxchannel is None
             assert hub_node.duplex == 0
             assert hub_node.simpleusb_settings is None
     finally:
@@ -255,7 +261,7 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
             assert network.id == original_id
             assert network.name == "Updated network"
             assert network.http_registration_server == "updated.invalid"
-            assert network.registration_method == "http"
+            assert network.registration_method is None
             assert session.query(Network).filter_by(stable_key="allstarlink").count() == 1
     finally:
         _dispose(sessions, settings.database)
@@ -273,7 +279,11 @@ def test_network_add_and_import_are_separate_pages(tmp_path):
     assert b"href=\"/networks/add\"" in overview.data
     assert b"href=\"/networks/import\"" in overview.data
     assert b'name="config"' not in overview.data
-    assert client.get("/networks/add").status_code == 200
+    add_page = client.get("/networks/add")
+    assert add_page.status_code == 200
+    assert b'value="4569"' in add_page.data
+    assert b'data-reset-default="field-iax_registration_port"' in add_page.data
+    assert b'Stable key <span class="text-danger">(Required)</span>' in add_page.data
     assert client.get("/networks/import").status_code == 200
 
 
@@ -309,7 +319,7 @@ def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path
             assert network.iax_registration_port == 4568
             assert network.stats_enabled is True
             assert network.stats_post_url == "https://stats.example.net/update"
-            assert network.node_lookup_method == "both"
+            assert network.node_lookup_method is None
             assert network.max_dns_node_length == 7
             assert network.external_node_file == "/var/lib/asterisk/nodes"
     finally:

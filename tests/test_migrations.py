@@ -22,7 +22,7 @@ def _alembic_config(database):
 
 def test_migration_graph_has_one_head():
     config = _alembic_config("/tmp/unused-node-manager-test.sqlite3")
-    assert ScriptDirectory.from_config(config).get_heads() == ["0006_explicit_network_settings"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0007_sparse_config_defaults"]
 
 
 def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path):
@@ -30,8 +30,10 @@ def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path
     upgrade_database(database)
     engine = create_engine(f"sqlite:///{database}")
     inspector = inspect(engine)
-    node_columns = {column["name"] for column in inspector.get_columns("nodes")}
+    node_column_details = {column["name"]: column for column in inspector.get_columns("nodes")}
+    node_columns = set(node_column_details)
     assert {"rxchannel", "duplex", "linktolink", "hangtime", "callerid"} <= node_columns
+    assert node_column_details["hangtime"]["nullable"] is True
     assert "settings" not in node_columns
     assert {column["name"] for column in inspector.get_columns("simpleusb_settings")} >= {
         "rxboost", "carrierfrom", "rxmixerset", "txmixaset", "txmixbset"
@@ -40,16 +42,18 @@ def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path
         "rxboost", "carrierfrom", "rxdemod", "rxvoiceadj", "rxctcssfreqs", "txmixaset"
     }
     network_columns = {column["name"] for column in inspector.get_columns("networks")}
+    network_column_details = {column["name"]: column for column in inspector.get_columns("networks")}
     assert {"registration_method", "http_registration_server", "iax_registration_server",
             "stats_enabled", "stats_post_url", "node_lookup_method", "dns_node_domain"} <= network_columns
     assert "config" not in network_columns
+    assert network_column_details["registration_method"]["nullable"] is True
     with engine.connect() as connection:
         assert connection.execute(text("SELECT stable_key FROM networks")).scalars().all() == ["allstarlink"]
         allstar = connection.execute(text(
             "SELECT registration_method, http_registration_server, stats_post_url, "
             "node_lookup_method, dns_node_domain FROM networks WHERE stable_key='allstarlink'"
         )).one()
-        assert allstar == ("http", "register.allstarlink.org",
+        assert allstar == (None, "register.allstarlink.org",
                            "http://stats.allstarlink.org/uhandler", "dns", "nodes.allstarlink.org")
         assert connection.execute(text(
             "SELECT count(*) FROM settings WHERE key='network_profiles_enabled'")).scalar_one() == 0
