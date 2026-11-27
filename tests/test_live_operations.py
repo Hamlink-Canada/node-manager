@@ -85,14 +85,16 @@ def test_demo_state_is_shared_by_nodes_using_the_same_runtime_device():
     assert "Rx Level currently set to 612" in tasks._mock(read)["output"]
 
 
-def test_invalid_tuning_is_rejected_before_demo_task_submission():
+def test_invalid_demo_tuning_cannot_return_success():
     tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
+    invalid = TaskRequest("c" * 32, "demo", "simpleusb", "set_value", 1000,
+                          "1000", "not_a_setting", "invalid")
     try:
-        tasks.submit("demo", "simpleusb", "set_value", 1000, "1000", "not_a_setting", "invalid")
+        tasks._mock(invalid)
     except OperationError as error:
         assert "Unsupported simpleusb tuning setting" in str(error)
     else:
-        raise AssertionError("an invalid demo tuning request was accepted")
+        raise AssertionError("an invalid demo tuning request was reported as successful")
 
 
 def test_demo_device_listing_matches_channel_driver_format():
