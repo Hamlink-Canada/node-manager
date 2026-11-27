@@ -1,11 +1,14 @@
 #!/bin/sh
 set -eu
 
+asterisk_directory=${ASTNODE_PATHS__ASTERISK_DIRECTORY:-/etc/asterisk}
+secret_key_file=${ASTNODE_WEB__SECRET_KEY_FILE:-/etc/asterisk-node-manager/secret-key}
+
 if [ "$(id -u)" -eq 0 ]; then
     if [ -n "${ASTNODE_ASTERISK_GID:-}" ]; then
         asterisk_gid=$ASTNODE_ASTERISK_GID
-    elif [ -d "$ASTNODE_ASTERISK_DIRECTORY" ]; then
-        asterisk_gid=$(stat -c '%g' "$ASTNODE_ASTERISK_DIRECTORY")
+    elif [ -d "$asterisk_directory" ]; then
+        asterisk_gid=$(stat -c '%g' "$asterisk_directory")
     else
         asterisk_gid=
     fi
@@ -20,13 +23,15 @@ if [ "${1:-}" = "astnode-web" ] && [ "$(id -u)" -eq 0 ]; then
     if [ "$demo_mode" != "1" ]; then
         astnode init
     fi
-    if [ ! -s "$ASTNODE_SECRET_KEY_FILE" ]; then
-        mkdir -p "$(dirname "$ASTNODE_SECRET_KEY_FILE")"
+    if [ "$demo_mode" != "1" ] && [ ! -s "$secret_key_file" ]; then
+        mkdir -p "$(dirname "$secret_key_file")"
         umask 077
-        python -c 'import secrets; print(secrets.token_hex(32))' > "$ASTNODE_SECRET_KEY_FILE"
+        python -c 'import secrets; print(secrets.token_hex(32))' > "$secret_key_file"
     fi
-    mkdir -p "$ASTNODE_ASTERISK_DIRECTORY"
-    mkdir -p "$(dirname "$ASTNODE_SECRET_KEY_FILE")"
+    mkdir -p "$asterisk_directory"
+    if [ "$demo_mode" != "1" ]; then
+        mkdir -p "$(dirname "$secret_key_file")"
+    fi
     if [ "$demo_mode" = "1" ]; then
         demo_output=$(python -c 'from asterisk_node_manager.config import load_settings; print(load_settings().demo_output_directory)')
         mkdir -p "$demo_output"
@@ -41,8 +46,10 @@ if [ "${1:-}" = "astnode-web" ] && [ "$(id -u)" -eq 0 ]; then
             chmod 0600 "${database_path}.lock"
         fi
     fi
-    chown root:asterisk-node-manager "$ASTNODE_SECRET_KEY_FILE"
-    chmod 0640 "$ASTNODE_SECRET_KEY_FILE"
+    if [ "$demo_mode" != "1" ]; then
+        chown root:asterisk-node-manager "$secret_key_file"
+        chmod 0640 "$secret_key_file"
+    fi
     exec setpriv --reuid=asterisk-node-manager --regid=asterisk-node-manager \
         --init-groups "$@"
 fi

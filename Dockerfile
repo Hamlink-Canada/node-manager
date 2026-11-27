@@ -14,13 +14,13 @@ ARG ASTNODE_ASTERISK_GID=1000
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    ASTNODE_DATABASE=/var/lib/asterisk-node-manager/manager.sqlite3 \
-    ASTNODE_ASTERISK_DIRECTORY=/etc/asterisk \
-    ASTNODE_WRITER_SOCKET=/run/asterisk-node-manager/writer.sock \
-    ASTNODE_WRITER_ALLOWLIST=/etc/asterisk-node-manager/writers \
-    ASTNODE_SECRET_KEY_FILE=/var/lib/asterisk-node-manager/secret-key \
-    ASTNODE_LISTEN_ADDRESS=0.0.0.0 \
-    ASTNODE_PORT=8765
+    ASTNODE_PATHS__DATABASE=/var/lib/asterisk-node-manager/manager.sqlite3 \
+    ASTNODE_PATHS__ASTERISK_DIRECTORY=/etc/asterisk \
+    ASTNODE_PATHS__WRITER_SOCKET=/run/asterisk-node-manager/writer.sock \
+    ASTNODE_PATHS__WRITER_ALLOWLIST=/etc/asterisk-node-manager/writers \
+    ASTNODE_WEB__SECRET_KEY_FILE=/var/lib/asterisk-node-manager/secret-key \
+    ASTNODE_WEB__LISTEN_ADDRESS=0.0.0.0 \
+    ASTNODE_WEB__PORT=8765
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget libpam0g util-linux \
