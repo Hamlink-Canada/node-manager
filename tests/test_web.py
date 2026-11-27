@@ -422,7 +422,6 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
     monkeypatch.setenv("ASTNODE_PATHS__DATABASE", str(configured_database))
     assert load_settings(config).database == ":memory:"
     assert not configured_database.exists()
-
     from asterisk_node_manager.config import Settings
     for database_path in (Settings.database, configured_database):
         with pytest.raises(ValueError, match="in-memory database"):
@@ -431,3 +430,19 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
 
     with pytest.raises(FileNotFoundError):
         load_settings(tmp_path / "missing-explicit-config.toml")
+
+
+def test_web_main_logs_mode_and_listen_address(monkeypatch, caplog):
+    import logging
+    from asterisk_node_manager import web
+
+    settings = Settings(database=":memory:", demo_mode=True, listen_address="127.0.0.1", port=8765)
+    monkeypatch.setattr(web, "load_settings", lambda: settings)
+    monkeypatch.setattr(web, "create_app", lambda _settings: object())
+    monkeypatch.setattr(web, "serve", lambda _app, **_kwargs: None)
+
+    with caplog.at_level(logging.INFO):
+        assert web.main() == 0
+
+    assert "Starting node-manager web service in demo mode" in caplog.text
+    assert "Listening on http://127.0.0.1:8765" in caplog.text

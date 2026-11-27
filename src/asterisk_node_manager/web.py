@@ -6,6 +6,7 @@ import os
 import re
 import json
 import difflib
+import logging
 import socket
 import tempfile
 import threading
@@ -40,6 +41,8 @@ from .configuration import (
     translate,
     validate_node_settings,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -900,10 +903,14 @@ def _read_secret(path: Path, demo_mode: bool = False) -> str:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    mode = "demo" if settings.demo_mode else "normal"
+    logger.info("Starting node-manager web service in %s mode", mode)
     app = create_app(settings)
     if not settings.demo_mode:
         _request_generation(settings)
+    logger.info("Listening on http://%s:%d", settings.listen_address, settings.port)
     serve(app, host=settings.listen_address, port=settings.port)
     return 0
 

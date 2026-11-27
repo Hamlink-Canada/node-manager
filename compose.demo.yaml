@@ -4,10 +4,10 @@ services:
     image: asterisk-node-manager:local
     command: ["astnode-web"]
     environment:
-      ASTNODE_DEMO: "yes"
-      ASTNODE_ASTERISK_DIRECTORY: /demo-output
-      ASTNODE_DEMO_OUTPUT_DIRECTORY: /demo-output
-      ASTNODE_WRITER_SOCKET: /run/asterisk-node-manager/no-helper.sock
+      ASTNODE_WEB__DEMO_MODE: "true"
+      ASTNODE_PATHS__ASTERISK_DIRECTORY: /demo-output
+      ASTNODE_PATHS__DEMO_OUTPUT_DIRECTORY: /demo-output
+      ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/no-helper.sock
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
