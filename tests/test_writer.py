@@ -116,3 +116,25 @@ def test_file_replacement_restores_all_original_files_on_failure(monkeypatch, tm
         writer._replace_files(directory, {"one.conf": b"new-one", "two.conf": b"new-two"})
     assert (directory / "one.conf").read_bytes() == b"old-one"
     assert (directory / "two.conf").read_bytes() == b"old-two"
+
+
+def test_file_replacement_rolls_back_before_propagating_shutdown(monkeypatch, tmp_path):
+    directory = tmp_path / "asterisk"
+    directory.mkdir()
+    (directory / "one.conf").write_bytes(b"old-one")
+    (directory / "two.conf").write_bytes(b"old-two")
+    original_replace = os.replace
+    calls = 0
+
+    def stop_during_second_replace(source, target):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise SystemExit(0)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(writer.os, "replace", stop_during_second_replace)
+    with pytest.raises(SystemExit):
+        writer._replace_files(directory, {"one.conf": b"new-one", "two.conf": b"new-two"})
+    assert (directory / "one.conf").read_bytes() == b"old-one"
+    assert (directory / "two.conf").read_bytes() == b"old-two"

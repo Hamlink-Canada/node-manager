@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .configuration import (interface_config_values, node_config_values,
                             node_fields_for_file)
@@ -138,7 +138,9 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
         module_directives = list(session.scalars(select(ModuleDirective).order_by(
             ModuleDirective.section, ModuleDirective.line_number, ModuleDirective.id)))
         extension_rules = list(session.scalars(select(ExtensionRule).order_by(
-            ExtensionRule.context, ExtensionRule.line_number, ExtensionRule.id)))
+            ExtensionRule.context,
+            func.coalesce(ExtensionRule.updated_line_number, ExtensionRule.line_number),
+            ExtensionRule.id)))
         rpt_value_map = {}
         for value in file_values:
             if value.file_name == "rpt.conf":
@@ -152,13 +154,24 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                     value=value.value, secret=value.secret)
         rpt_values = list(rpt_value_map.values())
         rpt_custom_lines = [line for line in custom_lines if line.file_name == "rpt.conf"]
+        rpt_node_defaults = {value.key: value.value for value in rpt_values
+                             if value.section in {"node-main", "node-main(!)"}}
+        effective_file_values = {(value.file_name, value.section, value.key): value
+                                 for value in file_values}
+        for value in custom_values:
+            effective_file_values[(value.file_name, value.section, value.key)] = value
+        interface_defaults = {
+            filename: {value.key: value.value for value in effective_file_values.values()
+                       if value.file_name == filename
+                       and value.section in {"node-main", "node-main(!)"}}
+            for filename in ("simpleusb.conf", "usbradio.conf")
+        }
         rpt_values, rpt_custom_lines = _expand_asterisk_templates(rpt_values, rpt_custom_lines)
-        node_defaults = {value.key: value.value for value in rpt_values
-                         if value.section.startswith("node-main")}
-        simpleusb_defaults = {value.key: value.value for value in file_values
-                              if value.file_name == "simpleusb.conf" and value.section.startswith("node-main")}
-        usbradio_defaults = {value.key: value.value for value in file_values
-                             if value.file_name == "usbradio.conf" and value.section.startswith("node-main")}
+        node_defaults = {**rpt_node_defaults,
+                         **{value.key: value.value for value in rpt_values
+                            if value.section.startswith("node-main")}}
+        simpleusb_defaults = interface_defaults["simpleusb.conf"]
+        usbradio_defaults = interface_defaults["usbradio.conf"]
         nodes_context = []
         node_profiles = {}
         usb_values = []
@@ -281,6 +294,7 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
             template_name = f"{filename}.j2"
             if filename == "rpt.conf":
                 node_sections = {str(node.node_number) for node in nodes}
+                base_sections = [section for section in base_sections if section not in node_sections]
                 for node in nodes_context:
                     node["custom_lines"] = [line.content for line in custom
                                             if line.section == str(node["node_number"])]

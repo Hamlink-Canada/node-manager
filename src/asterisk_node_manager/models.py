@@ -229,6 +229,7 @@ class ExtensionRule(Base):
     id = Column(Integer, primary_key=True)
     context = Column(String(200), nullable=False)
     line_number = Column(Integer, nullable=False)
+    updated_line_number = Column(Integer, nullable=True)
     directive = Column(String(10), nullable=False)
     extension = Column(String(255), nullable=True)
     priority = Column(String(80), nullable=False)
@@ -249,6 +250,7 @@ class ExtensionRule(Base):
         self.updated_priority = None
         self.updated_application = None
         self.updated_arguments = None
+        self.updated_line_number = None
         self.is_custom = False
         self.is_deleted = False
 

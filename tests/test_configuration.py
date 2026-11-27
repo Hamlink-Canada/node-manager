@@ -53,6 +53,26 @@ def test_defaults_are_displayed_and_saved_as_sparse_overrides(monkeypatch):
     assert node_config_values(node)["hangtime"] == "5000"
     assert node_config_values(node)["linktolink"] == "no"
 
+    apply_node_config_values(node, {"hangtime": "5000"}, {"hangtime": "6000"})
+    assert node.hangtime == 5000
+
+
+def test_effective_database_defaults_are_shown_by_node_field_groups():
+    groups = node_field_groups(1234, {}, defaults={"hangtime": "6000"})
+    fields = {field["key"]: field for group in groups for field in group["fields"]}
+    assert fields["hangtime"]["value"] == "6000"
+    assert fields["hangtime"]["default_value"] == "6000"
+
+
+def test_interface_values_matching_non_builtin_effective_default_are_sparse():
+    from asterisk_node_manager.configuration import apply_interface_config_values
+    from asterisk_node_manager.models import USBRadioSettings
+
+    radio = USBRadioSettings()
+    apply_interface_config_values(radio, "usbradio.conf", {"rxboost": "yes"},
+                                  {"rxboost": "no"})
+    assert radio.rxboost is True
+
 
 def test_radio_interface_defaults_are_sparse_and_restored_for_display():
     from asterisk_node_manager.models import USBRadioSettings

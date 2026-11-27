@@ -2,7 +2,7 @@ from asterisk_node_manager import cli
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.configuration import node_config_values
-from asterisk_node_manager.models import Node
+from asterisk_node_manager.models import CustomValue, Node
 from asterisk_node_manager.generate import render_database
 from asterisk_node_manager.migrate import upgrade_database
 import sqlite3
@@ -41,6 +41,9 @@ def test_import_commit_maps_known_fields_and_regenerates(monkeypatch, tmp_path):
             assert node.simpleusb_settings.rxmixerset == 632
             assert node.simpleusb_settings.rxboost is True
             assert session.query(Node).count() == 1
+            assert session.query(CustomValue).filter_by(
+                file_name="rpt.conf", section="1234", key="customoption").one().value == "kept"
+        assert "customoption = kept" in render_database(settings.database)["rpt.conf"].decode()
     finally:
         sessions.kw["bind"].dispose()
 
@@ -116,6 +119,45 @@ def test_imported_codec_directives_keep_source_order_when_regenerated(monkeypatc
         elif section == "[general]" and line.strip().startswith(("allow =", "disallow =")):
             codec_lines.append(line.strip())
     assert codec_lines == ["allow = all", "disallow = all", "allow = ulaw"]
+
+
+def test_import_preserves_asterisk_include_directives(monkeypatch, tmp_path):
+    source = tmp_path / "existing"
+    source.mkdir()
+    (source / "iax.conf").write_text('[general]\n#include "extra.conf"\n#tryinclude "optional.conf"\n')
+    settings = Settings(database=tmp_path / "manager.sqlite3", asterisk_directory=tmp_path / "asterisk")
+    monkeypatch.setattr(cli, "_require_root", lambda: None)
+    monkeypatch.setattr("asterisk_node_manager.writer._replace_files", lambda *args: None)
+
+    assert cli._import_config(source, True, settings) == 0
+    rendered = render_database(settings.database)["iax.conf"].decode()
+    assert '#include "extra.conf"' in rendered
+    assert '#tryinclude "optional.conf"' in rendered
+
+
+def test_generated_node_configuration_imports_back_as_a_node(monkeypatch, tmp_path):
+    source = tmp_path / "generated"
+    source.mkdir()
+    initial = Settings(database=tmp_path / "initial.sqlite3", asterisk_directory=tmp_path / "initial-asterisk")
+    upgrade_database(initial.database)
+    sessions = session_factory(initial.database)
+    with sessions.begin() as session:
+        session.add(Node(node_number=1234, name="Imported node", rxchannel="Radio/1234", duplex=0))
+    (source / "rpt.conf").write_bytes(render_database(initial.database)["rpt.conf"])
+    sessions.kw["bind"].dispose()
+
+    restored = Settings(database=tmp_path / "restored.sqlite3", asterisk_directory=tmp_path / "restored-asterisk")
+    monkeypatch.setattr(cli, "_require_root", lambda: None)
+    monkeypatch.setattr("asterisk_node_manager.writer._replace_files", lambda *args: None)
+    assert cli._import_config(source, True, restored) == 0
+    restored_sessions = session_factory(restored.database)
+    try:
+        with restored_sessions() as session:
+            node = session.query(Node).filter_by(node_number=1234).one()
+            assert node_config_values(node)["rxchannel"] == "Radio/1234"
+            assert node.duplex == 0
+    finally:
+        restored_sessions.kw["bind"].dispose()
 
 
 def test_restore_rejects_unrelated_sqlite_database_without_replacing_current(monkeypatch, tmp_path):

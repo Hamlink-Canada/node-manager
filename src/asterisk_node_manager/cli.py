@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .config import load_settings
 from .database import database_write_lock, session_factory, sqlite_snapshot
-from .asterisk_config import expand_asterisk_inheritance, is_secret_key, parse_config
+from .asterisk_config import (expand_asterisk_inheritance, is_asterisk_include,
+                              is_secret_key, parse_config)
 from .migrate import upgrade_database, validate_database_backup
 from .models import (Change, ConfigValue, CustomLine, CustomValue, Network, Node,
                      SimpleUSBSettings, USBRadioSettings)
@@ -216,6 +217,8 @@ def _import_config(path: Path, commit: bool, settings) -> int:
     with session_factory(settings.database)() as db:
         for item in files:
             values, lines = parse_config(item.name, item.read_text(errors="replace"))
+            db.query(CustomLine).filter_by(file_name=item.name, is_default=False).delete()
+            db.query(CustomValue).filter_by(file_name=item.name).delete()
             if item.name == "rpt.conf":
                 expand_asterisk_inheritance(values, lines)
             if item.name == "rpt.conf":
@@ -298,8 +301,6 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                 (row.section, row.content.strip())
                 for row in db.query(CustomLine).filter_by(file_name=item.name, is_default=True)
                 if row.content.strip())
-            db.query(CustomLine).filter_by(file_name=item.name, is_default=False).delete()
-            db.query(CustomValue).filter_by(file_name=item.name).delete()
             sections_with_codec_directives = {
                 section for section, section_lines in lines.items()
                 if any(re.match(r"^\s*(?:allow|disallow)\s*(?:=>|=)", line, re.IGNORECASE)
@@ -312,7 +313,8 @@ def _import_config(path: Path, commit: bool, settings) -> int:
             for section, entries in lines.items():
                 for index, content in enumerate(entries):
                     stripped = content.strip()
-                    if not stripped or stripped.startswith((";", "#")):
+                    if not stripped or stripped.startswith(";") or (
+                            stripped.startswith("#") and not is_asterisk_include(content)):
                         continue
                     is_codec_directive = re.match(
                         r"^\s*(?:allow|disallow)\s*(?:=>|=)", content, re.IGNORECASE)
@@ -356,8 +358,11 @@ def _set_config_value(db, filename: str, section: str, key: str, value: str) -> 
 
 
 def _stored_defaults(db, filename: str) -> dict[str, str]:
-    return {row.key: row.value for row in db.query(ConfigValue).filter_by(
-        file_name=filename, section="node-main").all()}
+    defaults = {row.key: row.value for row in db.query(ConfigValue).filter_by(
+        file_name=filename).filter(ConfigValue.section.in_(("node-main", "node-main(!)"))).all()}
+    defaults.update({row.key: row.value for row in db.query(CustomValue).filter_by(
+        file_name=filename).filter(CustomValue.section.in_(("node-main", "node-main(!)"))).all()})
+    return defaults
 
 
 if __name__ == "__main__":

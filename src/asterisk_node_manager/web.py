@@ -28,7 +28,7 @@ from .database import (acquire_database_write_lock, database_exists, database_wr
                        dispose_database_engine,
                        is_memory_database, release_database_write_lock, restore_sqlite_snapshot,
                        session_factory, sqlite_snapshot)
-from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
+from .asterisk_config import SECRET_VALUE, is_asterisk_include, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
 from .models import (Change, ConfigValue, CustomLine, CustomValue, Network, Node, Setting,
                      SimpleUSBSettings, USBRadioSettings)
@@ -396,28 +396,50 @@ def create_app(settings: Settings | None = None) -> Flask:
             if node is None:
                 abort(404)
             node_number, name = node.node_number, node.name
-            existing = node_config_values(node)
+            rpt_defaults = _stored_defaults(db, "rpt.conf")
+            simpleusb_defaults = _stored_defaults(db, "simpleusb.conf")
+            usbradio_defaults = _stored_defaults(db, "usbradio.conf")
+            field_defaults = dict(rpt_defaults)
+            field_defaults.update({f"simpleusb_{key}": value for key, value in simpleusb_defaults.items()})
+            field_defaults.update({f"usbradio_{key}": value for key, value in usbradio_defaults.items()})
+            existing = node_config_values(node, rpt_defaults)
             for value in db.scalars(select(ConfigValue).where(
                     ConfigValue.file_name == "rpt.conf",
                     ConfigValue.section == str(node_number))).all():
                 if value.key not in NODE_CONFIG_FIELDS:
                     existing[value.key] = value.value
+            for value in db.scalars(select(CustomValue).where(
+                    CustomValue.file_name == "rpt.conf",
+                    CustomValue.section == str(node_number))).all():
+                if value.key not in NODE_CONFIG_FIELDS:
+                    existing[value.key] = value.value
             if node.simpleusb_settings:
                 existing.update({f"simpleusb_{key}": value for key, value in
-                                 interface_config_values(node.simpleusb_settings, "simpleusb.conf").items()})
+                                 interface_config_values(node.simpleusb_settings, "simpleusb.conf",
+                                                         simpleusb_defaults).items()})
             simpleusb_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "simpleusb.conf",
                 ConfigValue.section == str(node_number))).all()
             existing.update({f"simpleusb_{value.key}": value.value for value in simpleusb_values})
+            custom_simpleusb_values = db.scalars(select(CustomValue).where(
+                CustomValue.file_name == "simpleusb.conf",
+                CustomValue.section == str(node_number))).all()
+            existing.update({f"simpleusb_{value.key}": value.value for value in custom_simpleusb_values})
             if node.usbradio_settings:
                 existing.update({f"usbradio_{key}": value for key, value in
-                                 interface_config_values(node.usbradio_settings, "usbradio.conf").items()})
+                                 interface_config_values(node.usbradio_settings, "usbradio.conf",
+                                                         usbradio_defaults).items()})
             usbradio_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "usbradio.conf",
                 ConfigValue.section == str(node_number))).all()
             existing.update({f"usbradio_{value.key}": value.value for value in usbradio_values})
+            custom_usbradio_values = db.scalars(select(CustomValue).where(
+                CustomValue.file_name == "usbradio.conf",
+                CustomValue.section == str(node_number))).all()
+            existing.update({f"usbradio_{value.key}": value.value for value in custom_usbradio_values})
         if request.method == "GET":
-            groups = node_field_groups(node_number, existing, request_locale(), include_other_interfaces=True)
+            groups = node_field_groups(node_number, existing, request_locale(),
+                                       include_other_interfaces=True, defaults=field_defaults)
             return render_template("node-configuration.html", node_id=node_id,
                                    node_number=node_number, node_name=name,
                                    groups=[group for group in groups if not group["advanced"]],
@@ -427,7 +449,8 @@ def create_app(settings: Settings | None = None) -> Flask:
             abort(403)
         values, errors = validate_node_settings(request.form, node_number, existing)
         if errors:
-            groups = node_field_groups(node_number, request.form, request_locale(), include_other_interfaces=True)
+            groups = node_field_groups(node_number, request.form, request_locale(),
+                                       include_other_interfaces=True, defaults=field_defaults)
             return render_template("node-configuration.html", node_id=node_id,
                                    node_number=node_number, node_name=name,
                                    groups=[group for group in groups if not group["advanced"]],
@@ -925,13 +948,22 @@ def _record_change(db, actor: str, summary: str, details: dict | None = None) ->
 
 
 def _stored_defaults(db, filename: str) -> dict[str, str]:
-    return {row.key: row.value for row in db.scalars(select(ConfigValue).where(
-        ConfigValue.file_name == filename, ConfigValue.section == "node-main"))}
+    primary_rows = db.scalars(select(ConfigValue).where(
+        ConfigValue.file_name == filename,
+        ConfigValue.section.in_(("node-main", "node-main(!)")))).all()
+    custom_rows = db.scalars(select(CustomValue).where(
+        CustomValue.file_name == filename,
+        CustomValue.section.in_(("node-main", "node-main(!)")))).all()
+    defaults = {row.key: row.value for row in primary_rows}
+    defaults.update({row.key: row.value for row in custom_rows})
+    return defaults
 
 
 def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
     prior_values = {(row.section, row.key): row for row in
-                    db.scalars(select(CustomValue).where(CustomValue.file_name == filename))}
+                    db.scalars(select(ConfigValue).where(ConfigValue.file_name == filename))}
+    prior_values.update({(row.section, row.key): row for row in
+                         db.scalars(select(CustomValue).where(CustomValue.file_name == filename))})
     prior_custom = {}
     for row in db.scalars(select(CustomLine).where(CustomLine.file_name == filename)
                           .order_by(CustomLine.section, CustomLine.line_number)):
@@ -1021,7 +1053,8 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
         registration_index = 0
         for index, line in enumerate(lines):
             stripped = line.strip()
-            if not stripped or stripped.startswith((";", "#")):
+            if not stripped or stripped.startswith(";") or (
+                    stripped.startswith("#") and not is_asterisk_include(line)):
                 continue
             is_structured = ((filename == "modules.conf" and parse_module_directive(line))
                              or (filename == "extensions.conf" and parse_extension_rule(line)))

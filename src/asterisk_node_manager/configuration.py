@@ -122,7 +122,8 @@ def translate(locale: str, key: str) -> str:
 
 
 def node_field_groups(node_number: int, settings: dict[str, str], locale: str = "en",
-                      include_other_interfaces: bool = False) -> list[dict]:
+                      include_other_interfaces: bool = False,
+                      defaults: dict[str, str] | None = None) -> list[dict]:
     """Build display-ready form groups from the stable field definitions."""
     catalog = _load_catalog(locale)
     english = _load_catalog("en")
@@ -147,7 +148,7 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
         key = definition["key"]
         interface_prefix = {"SimpleUSB": "simpleusb", "Radio": "usbradio"}.get(interface)
         form_key = f"{interface_prefix}_{key}" if interface_prefix else key
-        default = definition.get("default", "")
+        default = (defaults or {}).get(form_key, definition.get("default", ""))
         configured = settings.get(form_key, settings.get(key, default))
         value = str(default if configured is None else configured)
         kind = definition["kind"]
@@ -184,7 +185,7 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
             "value": value,
             "default_value": str(default),
             "required": definition.get("required", False),
-            "has_default": "default" in definition,
+            "has_default": form_key in (defaults or {}) or "default" in definition,
             "choices": choices,
             "advanced": advanced,
             "browser_max": max(definition.get("max", 0), existing_number) if existing_number is not None else definition.get("max"),
@@ -238,22 +239,26 @@ def apply_interface_config_values(settings, file_name: str, values: dict[str, st
             continue
         kind = definition["kind"]
         value = raw
-        declared_default = (defaults or {}).get(key, definition.get("default"))
-        if declared_default is not None and value == str(declared_default):
-            setattr(settings, key, None)
-            continue
-        if declared_default is None and value == "":
-            setattr(settings, key, None)
-            continue
+        canonical = str(raw)
         if kind == "boolean":
             value = str(raw).lower() in {"yes", "true", "1", "on"}
-        elif kind == "number" or kind == "choice" and raw.isdigit():
+            canonical = "yes" if value else "no"
+        elif kind == "number" or kind == "choice" and str(raw).isdigit():
             value = int(raw)
-        if "default" in definition:
-            canonical = ("yes" if value else "no") if kind == "boolean" else str(value)
-            if canonical == str(definition["default"]):
-                setattr(settings, key, None)
-                continue
+            canonical = str(value)
+        elif kind == "decimal":
+            try:
+                canonical = format(Decimal(str(raw)).normalize(), "f")
+                value = canonical
+            except InvalidOperation:
+                canonical = str(raw)
+        declared_default = (defaults or {}).get(key, definition.get("default"))
+        if declared_default is not None and canonical == str(declared_default):
+            setattr(settings, key, None)
+            continue
+        if declared_default is None and canonical == "":
+            setattr(settings, key, None)
+            continue
         setattr(settings, key, value)
 
 
@@ -282,21 +287,19 @@ def apply_node_config_values(node, values: dict[str, str],
         if definition is None:
             continue
         declared_default = (defaults or {}).get(key, definition.get("default"))
-        if declared_default is not None and value == str(declared_default):
-            setattr(node, key, None)
-            continue
-        if "default" not in definition and value == "":
-            setattr(node, key, None)
-            continue
+        canonical = str(value)
         if definition["kind"] == "boolean":
             value = str(value).lower() in {"yes", "true", "1", "on"}
+            canonical = "yes" if value else "no"
         elif definition["kind"] == "number" or definition["kind"] == "choice" and key in {"duplex", "telemdefault", "parrot"}:
             value = int(value)
-        if "default" in definition:
-            canonical = ("yes" if value else "no") if definition["kind"] == "boolean" else str(value)
-            if canonical == str(definition["default"]):
-                setattr(node, key, None)
-                continue
+            canonical = str(value)
+        if declared_default is not None and canonical == str(declared_default):
+            setattr(node, key, None)
+            continue
+        if declared_default is None and canonical == "":
+            setattr(node, key, None)
+            continue
         setattr(node, key, value)
 
 

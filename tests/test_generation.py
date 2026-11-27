@@ -313,6 +313,99 @@ def test_rpt_node_templates_expand_into_managed_node_sections(database):
 
     assert "[4321]" in rendered
     assert "customsetting = node override" in rendered
+
+
+def test_rpt_node_main_defaults_survive_inheritance_expansion(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(Node(node_number=4321, name="Inherited node"))
+            session.add(CustomValue(file_name="rpt.conf", section="node-main(!)",
+                                    key="functions", value="shared-functions", secret=False))
+            session.add(CustomValue(file_name="rpt.conf", section="4321(node-main)",
+                                    key="customsetting", value="child", secret=False))
+        rendered = render_database(database)["rpt.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "functions = shared-functions" in rendered
+    assert "customsetting = child" in rendered
+
+
+def test_simpleusb_custom_node_main_default_is_used_for_unset_typed_field(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(Node(node_number=4321, name="USB node", rxchannel="SimpleUSB/4321",
+                             simpleusb_settings=SimpleUSBSettings()))
+            session.add(ConfigValue(file_name="simpleusb.conf", section="node-main",
+                                    key="rxmixerset", default_value="500", secret=False))
+            session.add(CustomValue(file_name="simpleusb.conf", section="node-main",
+                                    key="rxmixerset", value="700", secret=False))
+        rendered = render_database(database)["simpleusb.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "rxmixerset = 700" in rendered
+    assert "rxmixerset = 500" not in rendered
+
+
+def test_rpt_node_custom_values_do_not_emit_duplicate_node_section_headers(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(Node(node_number=4321, name="Configured node"))
+            session.add(CustomValue(file_name="rpt.conf", section="4321", key="customsetting",
+                                    value="retained", secret=False))
+        rendered = render_database(database)["rpt.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert rendered.count("[4321]") == 1
+    assert "customsetting = retained" in rendered
+
+
+def test_unreferenced_numeric_rpt_template_sections_keep_values_and_lines(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(ConfigValue(file_name="rpt.conf", section="9000(!)", key="customsetting",
+                                    default_value="retained", secret=False))
+            session.add(CustomLine(file_name="rpt.conf", section="9000(!)", line_number=0,
+                                   content="customline => retained"))
+        rendered = render_database(database)["rpt.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert rendered.count("[9000]") == 1
+    assert "customsetting = retained" in rendered
+    assert "customline => retained" in rendered
+
+
+def test_extension_rule_import_preserves_reordered_positions(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            defaults = [
+                ExtensionRule(context="review-fixture", line_number=0, directive="exten",
+                              extension="s", priority="1", application="Answer",
+                              is_default=True),
+                ExtensionRule(context="review-fixture", line_number=1, directive="same",
+                              extension=None, priority="n", application="Hangup",
+                              is_default=True),
+            ]
+            session.add_all(defaults)
+            original = [rule.render() for rule in defaults]
+            reordered = list(reversed(original))
+            save_structured_lines(session, "extensions.conf", {"review-fixture": reordered},
+                                  replace_defaults=False)
+        rendered = render_database(database)["extensions.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    positions = [rendered.index(rule) for rule in reordered]
+    assert positions == sorted(positions)
+    assert rendered.index(reordered[0]) < rendered.index(reordered[1])
     assert "[9000](!)" not in rendered
     assert "[9000]" not in rendered
 

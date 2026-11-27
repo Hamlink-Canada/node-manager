@@ -61,6 +61,14 @@ def test_literal_hash_in_value_is_not_an_inline_comment():
     assert preserved["test"] == []
 
 
+def test_hash_prefixed_asterisk_include_directives_are_recognized():
+    from asterisk_node_manager.asterisk_config import is_asterisk_include
+
+    assert is_asterisk_include('#include "extra.conf"')
+    assert is_asterisk_include('  #tryinclude "optional.conf"')
+    assert not is_asterisk_include("# a comment")
+
+
 def test_module_load_directives_are_preserved_as_repeated_lines():
     values, lines = parse_config(
         "modules.conf",

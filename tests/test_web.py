@@ -52,6 +52,13 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         node = session.query(Node).filter_by(node_number=1000).one()
         node.simpleusb_settings.devstr = "usb:1-2"
         node.simpleusb_settings.serial = "SN-12345"
+        default_hangtime = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one_or_none()
+        if default_hangtime is None:
+            session.add(ConfigValue(file_name="rpt.conf", section="node-main", key="hangtime",
+                                    default_value="6000", secret=False))
+        else:
+            default_hangtime.value = "6000"
     overview = client.get("/")
     assert b"USB device" in overview.data
     assert b"Identifier:" in overview.data
@@ -65,7 +72,7 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         assert response.status_code == 200
         assert b"Advanced settings" in response.data
         assert b'data-reset-default="field-hangtime"' in response.data
-        assert b'Default: <code>5000</code>' in response.data
+        assert b'Default: <code>6000</code>' in response.data
         assert b'data-interface-panel="SimpleUSB"' in response.data
         assert b'data-interface-panel="Radio" hidden' in response.data
         assert b'name="usbradio_rxdemod"' in response.data
@@ -77,7 +84,7 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         assert saved.status_code == 302
         with sessions() as session:
             node = session.get(Node, node_id)
-            assert node.hangtime is None
+            assert node.hangtime == 5000
             assert node.duplex == 0
             assert node.simpleusb_settings.devstr == "usb:1-2"
             assert node.simpleusb_settings.serial == "SN-12345"
@@ -372,6 +379,27 @@ def test_recent_changes_have_their_own_paginated_page(tmp_path):
     assert b"Pagination change 1" in last_page.data
 
 
+def test_recent_changes_pagination_bounds_numbered_links(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    with sessions.begin() as db:
+        latest = db.scalar(select(func.max(Change.revision))) or 0
+        db.add_all(Change(actor="tester", summary=f"Change {number}",
+                          revision=latest + number, details={})
+                   for number in range(1, 2001))
+    page = client.get("/changes?page=50")
+    assert page.status_code == 200
+    assert page.data.count(b'class="page-link"') <= 11
+    assert b">1</a>" in page.data
+    assert b">101</a>" in page.data
+    assert "…".encode() in page.data
+
+
 def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated",
@@ -610,6 +638,34 @@ def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
             "preview_hash": hashlib.sha256(unresolved.encode()).hexdigest(),
         })
         assert response.status_code == 400
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_primary_secret_values_are_restored_when_hidden_editor_value_is_unchanged(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    try:
+        with sessions.begin() as db:
+            db.add(ConfigValue(file_name="iax.conf", section="general", key="secret",
+                               default_value="primary-password", secret=True))
+        _dispose(sessions, settings.database)
+        page = client.get("/files/iax.conf")
+        assert b"secret = [hidden]" in page.data
+        content = "[general]\nsecret = [hidden]\n"
+        saved = client.post("/files/iax.conf", data={
+            "action": "commit", "confirmed": "yes", "content": content,
+            "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+        })
+        assert saved.status_code == 302
+        rendered = (settings.demo_output_directory / "iax.conf").read_text()
+        assert "secret = primary-password" in rendered
+        assert "secret = [hidden]" not in rendered
     finally:
         _dispose(sessions, settings.database)
 

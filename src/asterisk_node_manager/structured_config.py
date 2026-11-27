@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from sqlalchemy import func
+
 from .asterisk_config import _split_inline_comment
 from .models import ExtensionRule, ModuleDirective
 
@@ -128,7 +130,8 @@ def _save_module_directives(db, section_lines: dict[str, list[str]], *, replace_
 
 def _save_extension_rules(db, section_lines: dict[str, list[str]], *, replace_defaults: bool) -> None:
     existing = db.query(ExtensionRule).order_by(ExtensionRule.context,
-                                                ExtensionRule.line_number,
+                                                func.coalesce(ExtensionRule.updated_line_number,
+                                                              ExtensionRule.line_number),
                                                 ExtensionRule.id).all()
     rows_by_context: dict[str, list[ExtensionRule]] = {}
     for row in existing:
@@ -158,15 +161,17 @@ def _save_extension_rules(db, section_lines: dict[str, list[str]], *, replace_de
                 current = (row.directive, row.extension, row.priority, row.application, row.arguments)
                 desired = tuple(rule[key] for key in
                                 ("directive", "extension", "priority", "application", "arguments"))
-                if current == desired:
+                if current == desired and index == row.line_number:
                     row.revert_to_default()
                 else:
                     row.is_custom = True
+                    row.updated_line_number = index if index != row.line_number else None
                     (row.updated_directive, row.updated_extension, row.updated_priority,
                      row.updated_application, row.updated_arguments) = desired
             else:
                 for key, value in rule.items():
                     setattr(row, key, value)
+                row.line_number = index
                 row.is_custom = True
         for row in context_rows:
             if id(row) not in seen_rows and (replace_defaults or not row.is_default):

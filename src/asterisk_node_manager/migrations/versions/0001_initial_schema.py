@@ -63,6 +63,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('context', sa.String(length=200), nullable=False),
     sa.Column('line_number', sa.Integer(), nullable=False),
+    sa.Column('updated_line_number', sa.Integer(), nullable=True),
     sa.Column('directive', sa.String(length=10), nullable=False),
     sa.Column('extension', sa.String(length=255), nullable=True),
     sa.Column('priority', sa.String(length=80), nullable=False),

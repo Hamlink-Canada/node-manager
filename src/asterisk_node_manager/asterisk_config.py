@@ -10,6 +10,11 @@ SECRET_KEY = re.compile(r"(password|secret|token|credential|auth|api[_-]?key|^re
 SECRET_VALUE = "[hidden]"
 
 
+def is_asterisk_include(line: str) -> bool:
+    """Return whether a hash-prefixed line is an Asterisk include directive."""
+    return bool(re.match(r"^\s*#(?:try)?include\b", line, re.IGNORECASE))
+
+
 def is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY.search(key))
 

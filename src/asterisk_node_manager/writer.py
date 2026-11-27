@@ -112,7 +112,7 @@ def _replace_files(directory: Path, files: dict[str, bytes]) -> None:
                 staged[name] = Path(stream.name)
         for name, temporary in staged.items():
             os.replace(temporary, directory / name)
-    except Exception:
+    except BaseException:
         for name, previous in snapshots.items():
             target = directory / name
             if previous is None:
