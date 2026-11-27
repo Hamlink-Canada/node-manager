@@ -10,6 +10,13 @@ class SimpleUSBOperations(LiveOperation):
     module_name = "chan_simpleusb.so"
     tuning_fields = {"rx": (0, 999), "txa": (0, 999), "txb": (0, 999)}
 
+    def _select_device(self, device: str) -> None:
+        result = self.cli.run(f"susb active {device}")
+        if any(marker in result.lower() for marker in (
+            "no device [", "device not found", "does not exist", "no such device",
+        )):
+            raise OperationError(result or "Asterisk rejected the configured device selection.")
+
     def list_devices(self) -> str:
         # `show` lists every device known to the channel driver, including
         # the device string and ALSA card assigned to each configured node.
@@ -17,7 +24,7 @@ class SimpleUSBOperations(LiveOperation):
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)
-        self.select_device(f"susb active {device}")
+        self._select_device(device)
         return self.cli.run("susb show settings")
 
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
@@ -27,5 +34,5 @@ class SimpleUSBOperations(LiveOperation):
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
             raise OperationError(f"{setting} must be an integer from {minimum} to {maximum}.")
         device = validate_device(context.device)
-        self.select_device(f"susb active {device}")
+        self._select_device(device)
         return self.cli.run(f"susb tune {setting} {value}")
