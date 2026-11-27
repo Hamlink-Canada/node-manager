@@ -32,16 +32,10 @@ contains the complete configuration and does not depend on Asterisk's
 `custom/` include directory. This includes `echolink.conf`.
 
 The web service runs as the asterisk-node-manager system user. It cannot
-write Asterisk configuration files. It connects to the root-owned,
-systemd-activated Unix socket for two limited operations:
-
-- Authenticate a username through the configured host PAM service.
-- Render the current database and replace the fixed generated files.
-
-The helper does not accept arbitrary command lines or file paths. It stages
-all generated files, preserves existing ownership and mode, and rolls back
-replacements if a write fails. New files use mode 0640 and the asterisk
-group when present. Asterisk reload is not requested.
+write Asterisk configuration files. The root helper handles PAM authentication
+and publishes the fixed generated files, preserving existing ownership and
+mode and rolling back replacements if a write fails. Asterisk reload is not
+requested automatically.
 
 The web service runs fixed read-only diagnostics and allowlisted
 SimpleUSB/USBRadio live tuning operations against the configured Asterisk
@@ -59,6 +53,8 @@ through the web app to persist them. An explicit API request can reload the
 selected USB channel driver after configuration publication; configuration
 generation does not request a reload automatically. A driver reload reapplies
 saved configuration and can replace unsaved live changes.
+USBRadio `txslimsp` has no matching web configuration field, so its live value
+cannot be persisted through the web app.
 The writer reconciles the database to the generated files when it starts, and
 the web service requests a fresh generation before it begins listening. This
 repairs an interrupted file publication or a process restart from the current
