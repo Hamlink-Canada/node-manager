@@ -17,7 +17,7 @@ class SimpleUSBOperations(LiveOperation):
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)
-        self.cli.run(f"susb active {device}")
+        self.select_device(f"susb active {device}")
         return self.cli.run("susb show settings")
 
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
@@ -27,5 +27,5 @@ class SimpleUSBOperations(LiveOperation):
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
             raise OperationError(f"{setting} must be an integer from {minimum} to {maximum}.")
         device = validate_device(context.device)
-        self.cli.run(f"susb active {device}")
+        self.select_device(f"susb active {device}")
         return self.cli.run(f"susb tune {setting} {value}")
