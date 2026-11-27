@@ -1,0 +1,41 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    addgroup --system --quiet asterisk-node-manager || true
+    adduser --system --quiet --ingroup asterisk-node-manager \
+      --home /var/lib/asterisk-node-manager --no-create-home \
+      --shell /usr/sbin/nologin asterisk-node-manager || true
+    install -d -o asterisk-node-manager -g asterisk-node-manager -m 0750 /var/lib/asterisk-node-manager
+    install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager
+    if [ ! -e /etc/asterisk-node-manager/secret-key ]; then
+      umask 077
+      python3 -c 'import secrets; print(secrets.token_urlsafe(48))' > /etc/asterisk-node-manager/secret-key
+      chown root:asterisk-node-manager /etc/asterisk-node-manager/secret-key
+      chmod 0640 /etc/asterisk-node-manager/secret-key
+    fi
+    if [ ! -e /etc/asterisk-node-manager/writers ]; then
+      install -o root -g asterisk-node-manager -m 0640 /dev/null /etc/asterisk-node-manager/writers
+    fi
+    config=/etc/asterisk-node-manager/config.toml
+    database=$(/usr/bin/python3 -c 'from asterisk_node_manager.config import load_settings; print(load_settings("/etc/asterisk-node-manager/config.toml").database)')
+    if [ "$database" != ":memory:" ]; then
+      database_directory=$(dirname "$database")
+      if [ "$database_directory" != "/var/lib/asterisk-node-manager" ] && [ ! -d "$database_directory" ]; then
+        echo "Create $database_directory and grant asterisk-node-manager write access before configuring this database path." >&2
+        exit 1
+      fi
+      /usr/bin/astnode --config "$config" init
+      chown asterisk-node-manager:asterisk-node-manager "$database"
+      chmod 0640 "$database"
+      if [ -e "${database}.lock" ]; then
+        chown asterisk-node-manager:asterisk-node-manager "${database}.lock"
+        chmod 0600 "${database}.lock"
+      fi
+    fi
+    ;;
+esac
+
+#DEBHELPER#
+exit 0

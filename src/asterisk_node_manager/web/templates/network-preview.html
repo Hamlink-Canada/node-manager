@@ -1,0 +1,19 @@
+{% extends "layout.html" %}
+{% block title %}Preview network profile · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="mb-4"><p class="text-uppercase text-primary fw-semibold small mb-1">Network profiles</p><h1 class="h2 mb-1">Preview network profile</h1><p class="text-body-secondary mb-0">Review the profile before saving it.</p></div>
+<section class="card shadow-sm">
+  <div class="card-header bg-white py-3"><h2 class="h5 mb-0">{{ name }}</h2></div>
+  <div class="card-body">
+    <p class="font-monospace small">Stable key: {{ stable_key }}</p>
+    {% if exists %}<div class="alert alert-info" role="status">This updates the matching profile in place. Its default and node assignments remain unchanged.</div>{% else %}<div class="alert alert-success" role="status">This adds a new profile.</div>{% endif %}
+    <h3 class="h6">Configuration object</h3><pre class="json-output">{{ config_json }}</pre>
+    <form class="d-flex flex-wrap gap-2 mt-3" method="post" action="{{ url_for('import_network') if source == 'upload' else url_for('create_network') }}">
+      <input type="hidden" name="action" value="commit"><input type="hidden" name="key" value="{{ stable_key }}">
+      <input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="config" value="{{ config_json }}">
+      {% if source == 'upload' %}<input type="hidden" name="schema_version" value="1">{% endif %}
+      <button class="btn btn-primary" type="submit">Commit profile and regenerate files</button><a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Cancel</a>
+    </form>
+  </div>
+</section>
+{% endblock %}

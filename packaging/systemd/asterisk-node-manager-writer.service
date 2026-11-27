@@ -1,0 +1,18 @@
+[Unit]
+Description=Asterisk Node Manager privileged configuration writer
+Requires=asterisk-node-manager-writer.socket
+After=asterisk-node-manager-writer.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=ASTNODE_CONFIG=/etc/asterisk-node-manager/config.toml
+ExecStart=/usr/bin/astnode-writer
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadOnlyPaths=/var/lib/asterisk-node-manager
+ReadWritePaths=/etc/asterisk
+PrivateTmp=true

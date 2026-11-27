@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block title %}Advanced configuration · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="mb-4"><p class="text-uppercase text-primary fw-semibold small mb-1">Advanced configuration</p><h1 class="h2 mb-1">Configuration files</h1><p class="text-body-secondary mb-0">Use a node's Settings form for common repeater and SimpleUSB options. These editors are for specialized settings and custom configuration.</p></div>
+<section class="card shadow-sm">
+  <div class="card-header bg-white py-3"><h2 class="h5 mb-0">Managed files</h2></div>
+  <div class="list-group list-group-flush">
+    {% for filename in filenames %}<a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-3" href="{{ url_for('edit_file', filename=filename) }}"><span class="font-monospace">{{ filename }}</span><span class="text-primary small">Edit <span aria-hidden="true">→</span></span></a>
+    {% else %}<div class="list-group-item text-body-secondary">No managed files are configured.</div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

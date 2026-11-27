@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block title %}Diagnostics · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="mb-4"><p class="text-uppercase text-primary fw-semibold small mb-1">System status</p><h1 class="h2 mb-1">Read-only diagnostics</h1><p class="text-body-secondary mb-0">Run supported Asterisk commands and inspect their output.</p></div>
+<section class="card shadow-sm">
+  <div class="card-header bg-white py-3 d-flex flex-wrap justify-content-between gap-2"><h2 class="h5 mb-0">Asterisk CLI</h2><span class="badge text-bg-secondary">Asterisk Node Manager {{ app_version }}</span></div>
+  <div class="card-body">
+    <form class="row g-3 align-items-end" method="post">
+      <div class="col-md-8"><label class="form-label" for="diagnostic-command">Asterisk command</label><select class="form-select" id="diagnostic-command" name="command">{% for command in choices %}<option {% if command == selected %}selected{% endif %}>{{ command }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Run diagnostic</button></div>
+    </form>
+    {% if error %}<div class="alert alert-danger mt-4" role="alert">{{ error }}</div>{% endif %}
+    {% if output is not none %}<div class="mt-4"><h3 class="h6">Command output</h3><pre class="terminal-output mb-0">{{ output }}</pre></div>{% endif %}
+  </div>
+</section>
+{% endblock %}

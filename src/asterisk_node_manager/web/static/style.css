@@ -1,0 +1,114 @@
+:root {
+  --anm-ink: #172c43;
+  --anm-blue: #1769aa;
+  --anm-cyan: #61c6d6;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.app-navbar {
+  background: linear-gradient(112deg, var(--anm-ink), #21496b);
+  box-shadow: 0 .25rem 1rem rgb(23 44 67 / 16%);
+}
+
+.brand-mark {
+  display: inline-flex;
+  width: 1.8rem;
+  height: 1.8rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: .55rem;
+  background: var(--anm-cyan);
+  color: var(--anm-ink);
+  font-weight: 800;
+}
+
+.brand-mark-lg {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.35rem;
+}
+
+.demo-banner {
+  background: #fff0c2;
+  color: #543f0a;
+}
+
+.login-shell {
+  min-height: min(68vh, 42rem);
+}
+
+.card {
+  --bs-card-border-color: #e1e7ed;
+}
+
+.card-header {
+  border-bottom-color: #e8edf2;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: #73a9d3;
+  box-shadow: 0 0 0 .2rem rgb(23 105 170 / 14%);
+}
+
+.help-tip {
+  min-width: 1.25rem;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+.wizard-choice {
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.wizard-choice:has(input:checked) {
+  border-color: var(--anm-blue);
+  box-shadow: 0 0 0 .2rem rgb(23 105 170 / 12%);
+}
+
+.wizard-progress .badge {
+  font-size: .875rem;
+  font-weight: 600;
+  padding: .55rem .8rem;
+}
+
+.config-editor {
+  min-height: 32rem;
+  tab-size: 4;
+  font-size: .875rem;
+  line-height: 1.55;
+}
+
+.diff-output,
+.json-output,
+.terminal-output {
+  overflow: auto;
+  max-height: 34rem;
+  border: 1px solid #25384b;
+  border-radius: .5rem;
+  background: #142536;
+  color: #e4edf6;
+  padding: 1rem;
+  font-size: .84rem;
+  line-height: 1.55;
+}
+
+.diff-output,
+.terminal-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.json-output {
+  white-space: pre;
+}
+
+@media (max-width: 575.98px) {
+  .config-editor {
+    min-height: 24rem;
+  }
+}

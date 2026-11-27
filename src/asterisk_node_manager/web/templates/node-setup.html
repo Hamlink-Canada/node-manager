@@ -1,0 +1,212 @@
+{% extends "layout.html" %}
+{% block title %}{{ _('wizard_title') }} · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <p class="text-uppercase text-primary fw-semibold small mb-1">{{ _('wizard_eyebrow') }}</p>
+    <h1 class="h2 mb-1">{{ _('wizard_title') }}</h1>
+    <p class="text-body-secondary mb-0">{{ _('wizard_intro') }}</p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">{{ _('wizard_cancel') }}</a>
+</div>
+
+{% if errors %}<div class="alert alert-danger" role="alert">{{ _('wizard_error_summary') }}</div>{% endif %}
+
+<ol class="wizard-progress list-unstyled d-flex flex-wrap gap-2 mb-4" aria-label="{{ _('wizard_progress') }}">
+  <li class="badge rounded-pill text-bg-primary" data-wizard-progress="0">1. {{ _('wizard_step_details') }}</li>
+  <li class="badge rounded-pill text-bg-secondary" data-wizard-progress="1">2. {{ _('wizard_step_setup') }}</li>
+  <li class="badge rounded-pill text-bg-secondary" data-wizard-progress="2">3. {{ _('wizard_step_review') }}</li>
+</ol>
+
+<form id="node-setup-form" method="post" action="{{ url_for('node_setup') }}" novalidate>
+  <section class="card shadow-sm mb-4 wizard-step" data-wizard-step="0" aria-labelledby="step-details-title">
+    <div class="card-header bg-white py-3"><h2 class="h5 mb-0" id="step-details-title" tabindex="-1">{{ _('wizard_step_details') }}</h2></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="node-number">{{ _('wizard_node_id') }}</label>
+          <input class="form-control{% if errors.get('node_number') %} is-invalid{% endif %}" id="node-number" name="node_number" type="number" min="1" step="1" value="{{ values.node_number }}" required>
+          {% if errors.get('node_number') %}<div class="invalid-feedback d-block">{{ errors.node_number }}</div>{% endif %}
+        </div>
+        <div class="col-md-8">
+          <label class="form-label" for="node-name">{{ _('wizard_display_name') }}</label>
+          <input class="form-control{% if errors.get('name') %} is-invalid{% endif %}" id="node-name" name="name" maxlength="200" value="{{ values.name }}" required>
+          <div class="form-text">{{ _('wizard_display_name_help') }}</div>
+          {% if errors.get('name') %}<div class="invalid-feedback d-block">{{ errors.name }}</div>{% endif %}
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="node-callsign">{{ _('wizard_callsign') }}</label>
+          <input class="form-control{% if errors.get('callsign') %} is-invalid{% endif %}" id="node-callsign" name="callsign" maxlength="16" pattern="[A-Za-z0-9/-]{1,16}" value="{{ values.callsign }}" required>
+          <div class="form-text">{{ _('wizard_callsign_help') }}</div>
+          {% if errors.get('callsign') %}<div class="invalid-feedback d-block">{{ errors.callsign }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card shadow-sm mb-4 wizard-step" data-wizard-step="1" aria-labelledby="step-setup-title">
+    <div class="card-header bg-white py-3"><h2 class="h5 mb-0" id="step-setup-title" tabindex="-1">{{ _('wizard_step_setup') }}</h2></div>
+    <div class="card-body">
+      <fieldset class="mb-4">
+        <legend class="form-label fs-6">{{ _('wizard_node_type') }}</legend>
+        <div class="row g-3">
+          {% for profile, title, description in [
+            ('simplex_no_telemetry', _('wizard_profile_simplex_title'), _('wizard_profile_simplex_help')),
+            ('simplex_hotspot', _('wizard_profile_hotspot_title'), _('wizard_profile_hotspot_help')),
+            ('full_duplex_repeater', _('wizard_profile_repeater_title'), _('wizard_profile_repeater_help')),
+            ('hub_no_radio', _('wizard_profile_hub_title'), _('wizard_profile_hub_help'))
+          ] %}
+          <div class="col-md-6">
+            <label class="card h-100 p-3 wizard-choice" for="profile-{{ profile }}">
+              <span class="d-flex gap-2 align-items-start">
+                <input class="form-check-input mt-1" id="profile-{{ profile }}" type="radio" name="profile" value="{{ profile }}" required {% if values.profile == profile %}checked{% endif %}>
+                <span><span class="fw-semibold d-block">{{ title }}</span><span class="small text-body-secondary">{{ description }}</span></span>
+              </span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+        {% if errors.get('profile') %}<div class="text-danger small mt-2">{{ errors.profile }}</div>{% endif %}
+      </fieldset>
+
+      <div id="interface-choice" class="mb-3">
+        <label class="form-label" for="node-interface">{{ _('wizard_radio_interface') }}</label>
+        <select class="form-select{% if errors.get('interface') %} is-invalid{% endif %}" id="node-interface" name="interface">
+          <option value="SimpleUSB" {% if values.interface == 'SimpleUSB' %}selected{% endif %}>{{ _('wizard_interface_simpleusb') }}</option>
+          <option value="Radio" {% if values.interface == 'Radio' %}selected{% endif %}>{{ _('wizard_interface_usbradio') }}</option>
+          <option value="Voter" {% if values.interface == 'Voter' %}selected{% endif %}>{{ _('wizard_interface_voter') }}</option>
+        </select>
+        <div class="form-text">{{ _('wizard_radio_interface_help') }}</div>
+        {% if errors.get('interface') %}<div class="invalid-feedback d-block">{{ errors.interface }}</div>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card shadow-sm mb-4 wizard-step" data-wizard-step="2" aria-labelledby="step-review-title">
+    <div class="card-header bg-white py-3"><h2 class="h5 mb-0" id="step-review-title" tabindex="-1">{{ _('wizard_step_review') }}</h2></div>
+    <div class="card-body">
+      <p class="text-body-secondary">{{ _('wizard_review_help') }}</p>
+      <dl class="row mb-0">
+        <dt class="col-sm-4">{{ _('wizard_node_id') }}</dt><dd class="col-sm-8" id="review-node-id"></dd>
+        <dt class="col-sm-4">{{ _('wizard_display_name') }}</dt><dd class="col-sm-8" id="review-name"></dd>
+        <dt class="col-sm-4">{{ _('wizard_callsign') }}</dt><dd class="col-sm-8" id="review-callsign"></dd>
+        <dt class="col-sm-4">{{ _('wizard_node_type') }}</dt><dd class="col-sm-8" id="review-profile"></dd>
+        <dt class="col-sm-4" id="review-interface-label">{{ _('wizard_radio_interface') }}</dt><dd class="col-sm-8" id="review-interface"></dd>
+        <dt class="col-sm-4">{{ _('wizard_station_id') }}</dt><dd class="col-sm-8 font-monospace" id="review-station-id"></dd>
+      </dl>
+      <div class="alert alert-info mt-4 mb-0">{{ _('wizard_review_note') }}</div>
+    </div>
+  </section>
+
+  <div class="d-flex justify-content-between gap-3">
+    <button class="btn btn-outline-secondary" id="wizard-back" type="button">{{ _('wizard_back') }}</button>
+    <button class="btn btn-primary" id="wizard-next" type="button">{{ _('wizard_next') }}</button>
+    <button class="btn btn-primary" id="wizard-submit" type="submit">{{ _('wizard_create') }}</button>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const form = document.getElementById('node-setup-form');
+  const steps = [...form.querySelectorAll('[data-wizard-step]')];
+  const progress = [...document.querySelectorAll('[data-wizard-progress]')];
+  const back = document.getElementById('wizard-back');
+  const next = document.getElementById('wizard-next');
+  const submit = document.getElementById('wizard-submit');
+  const interfaceChoice = document.getElementById('interface-choice');
+  const profileRadios = [...form.querySelectorAll('input[name="profile"]')];
+  const interfaceSelect = document.getElementById('node-interface');
+  let current = 0;
+
+  const profileNames = {
+    simplex_no_telemetry: {{ _('wizard_profile_simplex_title')|tojson }},
+    simplex_hotspot: {{ _('wizard_profile_hotspot_title')|tojson }},
+    full_duplex_repeater: {{ _('wizard_profile_repeater_title')|tojson }},
+    hub_no_radio: {{ _('wizard_profile_hub_title')|tojson }}
+  };
+  const interfaceNames = {
+    SimpleUSB: {{ _('wizard_interface_simpleusb')|tojson }},
+    Radio: {{ _('wizard_interface_usbradio')|tojson }},
+    Voter: {{ _('wizard_interface_voter')|tojson }}
+  };
+
+  function selectedProfile() {
+    return form.querySelector('input[name="profile"]:checked')?.value || 'simplex_hotspot';
+  }
+
+  function refreshInterfaceChoice() {
+    interfaceChoice.hidden = selectedProfile() === 'hub_no_radio';
+  }
+
+  function refreshReview() {
+    const id = document.getElementById('node-number').value;
+    const callsign = document.getElementById('node-callsign').value.trim().toUpperCase();
+    document.getElementById('review-node-id').textContent = id;
+    document.getElementById('review-name').textContent = document.getElementById('node-name').value.trim();
+    document.getElementById('review-callsign').textContent = callsign;
+    document.getElementById('review-profile').textContent = profileNames[selectedProfile()];
+    const isHub = selectedProfile() === 'hub_no_radio';
+    document.getElementById('review-interface-label').hidden = isHub;
+    document.getElementById('review-interface').hidden = isHub;
+    document.getElementById('review-interface').textContent = interfaceNames[interfaceSelect.value];
+    document.getElementById('review-station-id').textContent = callsign ? `|i${callsign}` : '';
+  }
+
+  function showStep(index) {
+    current = index;
+    steps.forEach((step, i) => { step.hidden = i !== current; });
+    progress.forEach((item, i) => {
+      item.classList.toggle('text-bg-primary', i === current);
+      item.classList.toggle('text-bg-success', i < current);
+      item.classList.toggle('text-bg-secondary', i > current);
+      item.setAttribute('aria-current', i === current ? 'step' : 'false');
+    });
+    back.hidden = current === 0;
+    next.hidden = current === steps.length - 1;
+    submit.hidden = current !== steps.length - 1;
+    if (current === steps.length - 1) refreshReview();
+    steps[current].querySelector('h2').focus({ preventScroll: true });
+  }
+
+  function validateStep(index) {
+    const invalid = [...steps[index].querySelectorAll('input, select')]
+      .find((control) => !control.checkValidity());
+    if (invalid) {
+      invalid.reportValidity();
+      invalid.focus();
+      return false;
+    }
+    return true;
+  }
+
+  next.addEventListener('click', () => {
+    if (validateStep(current)) showStep(Math.min(current + 1, steps.length - 1));
+  });
+  back.addEventListener('click', () => showStep(Math.max(current - 1, 0)));
+  profileRadios.forEach((radio) => radio.addEventListener('change', () => {
+    refreshInterfaceChoice();
+    if (current === steps.length - 1) refreshReview();
+  }));
+  interfaceSelect.addEventListener('change', refreshReview);
+  form.addEventListener('input', refreshReview);
+  form.addEventListener('submit', (event) => {
+    for (let i = 0; i < steps.length; i += 1) {
+      const invalid = [...steps[i].querySelectorAll('input, select')]
+        .find((control) => !control.checkValidity());
+      if (invalid) {
+        event.preventDefault();
+        showStep(i);
+        invalid.reportValidity();
+        invalid.focus();
+        return;
+      }
+    }
+  });
+
+  refreshInterfaceChoice();
+  showStep({{ initial_step }});
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+{% block title %}{{ _('page_node_configuration') }} · {{ node_number }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div><p class="text-uppercase text-primary fw-semibold small mb-1">Node {{ node_number }}</p><h1 class="h2 mb-1">{{ _('page_node_configuration') }}</h1><p class="text-body-secondary mb-0">{{ _('page_node_configuration_intro') }}</p></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">Back to nodes</a>
+</div>
+{% if errors %}<div class="alert alert-danger" role="alert">Some fields need attention. Correct the highlighted values and save again.</div>{% endif %}
+<form method="post" action="{{ url_for('node_configuration', node_id=node_id) }}">
+  <input type="hidden" name="advanced_view" value="yes">
+  {% for group in groups %}
+  <section class="card shadow-sm mb-4">
+    <div class="card-header bg-white py-3"><h2 class="h5 mb-0">{{ group.title }}</h2></div>
+    <div class="card-body"><div class="row g-3">
+      {% for field in group.fields %}
+      <div class="col-md-6">
+        <label class="form-label" for="field-{{ field.key }}">
+          {{ field.label }}
+          <button class="btn btn-sm p-0 ms-1 text-primary help-tip" type="button" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ field.help }}" aria-label="{{ field.help }}">ⓘ</button>
+        </label>
+        {% if field.kind == 'choice' or field.kind == 'channel' %}
+        <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+          {% for value, label in field.choices %}<option value="{{ value }}" {% if field.value == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% elif field.kind == 'boolean' %}
+        <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+          <option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option>
+        </select>
+        {% else %}
+        <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+        {% endif %}
+        {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div></div>
+  </section>
+  {% endfor %}
+  <details class="card shadow-sm mb-4 advanced-settings" {% if advanced_view %}open{% endif %}>
+    <summary class="card-header bg-white py-3 fw-semibold">{{ _('advanced_settings') }}</summary>
+    <div class="card-body">
+      <p class="text-body-secondary">{{ _('advanced_settings_intro') }}</p>
+      {% for group in advanced_groups %}
+      <section class="border rounded p-3 mb-3">
+        <h2 class="h6 mb-3">{{ group.title }}</h2>
+        <div class="row g-3">
+          {% for field in group.fields %}
+          <div class="col-md-6">
+            <label class="form-label" for="field-{{ field.key }}">{{ field.label }}
+              <button class="btn btn-sm p-0 ms-1 text-primary help-tip" type="button" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ field.help }}" aria-label="{{ field.help }}">ⓘ</button>
+            </label>
+            {% if field.kind == 'choice' or field.kind == 'channel' %}
+            <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+              {% for value, label in field.choices %}<option value="{{ value }}" {% if field.value == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+            {% elif field.kind == 'boolean' %}
+            <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}><option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option></select>
+            {% else %}
+            <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+            {% endif %}
+            {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('files') }}">{{ _('advanced_raw_editors') }}</a>
+    </div>
+  </details>
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-4">
+    {% if can_write %}<button class="btn btn-primary btn-lg" type="submit">Save and regenerate configuration</button>{% endif %}
+    <span class="small text-body-secondary">{{ _('configuration_source_note') }} <a href="https://github.com/AllStarLink/app_rpt/blob/master/configs/rpt/rpt.conf" target="_blank" rel="noopener noreferrer">app_rpt rpt.conf examples</a>.</span>
+  </div>
+</form>
+{% endblock %}

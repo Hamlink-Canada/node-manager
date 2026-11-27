@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.12.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asterisk-node-manager"
+version = "0.1.0"
+description = "Manage Asterisk node configuration through a local database, CLI, and web interface"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Asterisk Node Manager contributors" }]
+dependencies = ["Alembic>=1.8", "Bootstrap-Flask>=2.2,<3", "Dynaconf>=3.3.5,<4", "Flask>=2.2", "Jinja2>=3.0", "python-pam>=2.0", "SQLAlchemy>=1.4.24", "waitress>=2.1"]
+
+classifiers = [
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Telephony",
+]
+
+[project.optional-dependencies]
+test = ["build>=1.6,<2", "pytest>=7.4"]
+
+[project.scripts]
+astnode = "asterisk_node_manager.cli:main"
+astnode-web = "asterisk_node_manager.web:main"
+astnode-writer = "asterisk_node_manager.writer:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asterisk_node_manager"]
+
+[tool.hatch.build]
+include = ["tests/**", "src/asterisk_node_manager/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,51 @@
+services:
+  web:
+    build:
+      context: .
+      args:
+        ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-1000}
+    image: asterisk-node-manager:local
+    command: ["astnode-web"]
+    environment:
+      ASTNODE_DEMO: "0"
+      ASTNODE_WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
+      ASTNODE_ASTERISK_DIRECTORY: /etc/asterisk
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - manager-data:/var/lib/asterisk-node-manager
+      - writer-run:/run/asterisk-node-manager
+      - ./docker/writers:/etc/asterisk-node-manager/writers
+    depends_on:
+      writer:
+        condition: service_healthy
+    restart: unless-stopped
+
+  writer:
+    image: asterisk-node-manager:local
+    build:
+      context: .
+      args:
+        ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-1000}
+    command: ["astnode-writer"]
+    user: root
+    environment:
+      ASTNODE_DATABASE: /var/lib/asterisk-node-manager/manager.sqlite3
+      ASTNODE_WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
+      ASTNODE_ASTERISK_DIRECTORY: /etc/asterisk
+      ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-}
+    volumes:
+      - manager-data:/var/lib/asterisk-node-manager
+      - writer-run:/run/asterisk-node-manager
+      - /var/run/asterisk:/var/run/asterisk
+      - ${ASTERISK_CONFIG_DIRECTORY:-./asterisk-config}:/etc/asterisk
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import sys; sys.exit(0 if Path('/run/asterisk-node-manager/writer.sock').is_socket() else 1)"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  manager-data:
+  writer-run:

@@ -1,0 +1,13 @@
+[Unit]
+Description=Asterisk Node Manager privileged writer socket
+
+[Socket]
+ListenStream=/run/asterisk-node-manager/writer.sock
+SocketUser=root
+SocketGroup=asterisk-node-manager
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+
+[Install]
+WantedBy=sockets.target

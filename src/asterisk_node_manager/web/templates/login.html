@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+{% block title %}Sign in · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="row justify-content-center align-items-center login-shell">
+  <div class="col-sm-10 col-md-7 col-lg-5 col-xl-4">
+    <section class="card border-0 shadow-sm">
+      <div class="card-body p-4 p-md-5">
+        <div class="text-center mb-4">
+          <span class="brand-mark brand-mark-lg mb-3">A</span>
+          <h1 class="h3 mb-1">{% if demo_mode %}Demo sign in{% else %}Welcome back{% endif %}</h1>
+          <p class="text-body-secondary mb-0">Sign in to manage node configuration.</p>
+        </div>
+        {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+        {% if demo_mode %}
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label" for="username">Demo username</label>
+            <input class="form-control" id="username" name="username" value="{{ demo_username }}" readonly>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Continue as demo user</button>
+        </form>
+        {% else %}
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label" for="username">Username</label>
+            <input class="form-control" id="username" name="username" autocomplete="username" required autofocus>
+          </div>
+          <div class="mb-4">
+            <label class="form-label" for="password">Password</label>
+            <input class="form-control" id="password" name="password" type="password"
+                   autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Sign in</button>
+        </form>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block title %}Overview · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+  <div>
+    <p class="text-uppercase text-primary fw-semibold small mb-1">Node management</p>
+    <h1 class="h2 mb-1">Overview</h1>
+    <p class="text-body-secondary mb-0">Manage node settings, network profiles, and generated configuration.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('diagnostics') }}">Diagnostics</a>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-sm-6 col-xl-4"><div class="card h-100 shadow-sm"><div class="card-body">
+    <div class="text-body-secondary small">Configured nodes</div><div class="display-6 fw-semibold">{{ node_count }}</div>
+  </div></div></div>
+  <div class="col-sm-6 col-xl-4"><div class="card h-100 shadow-sm"><div class="card-body">
+    <div class="text-body-secondary small">Network profiles</div><div class="display-6 fw-semibold">{{ networks|length }}</div>
+  </div></div></div>
+  <div class="col-sm-6 col-xl-4"><div class="card h-100 shadow-sm"><div class="card-body">
+    <div class="text-body-secondary small">Default network</div><div class="fs-5 fw-semibold mt-2">{% for network in networks %}{% if network.stable_key == default_network %}{{ network.name }}{% endif %}{% endfor %}</div>
+  </div></div></div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <section class="card shadow-sm mb-4">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center py-3"><h2 class="h5 mb-0">Nodes</h2>
+        {% if advanced_networks %}<span class="badge text-bg-info">Per-node network selection</span>{% endif %}
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light"><tr><th scope="col">Node number</th><th scope="col">Name</th>{% if advanced_networks %}<th scope="col">Network</th>{% endif %}<th scope="col" class="text-end">Actions</th></tr></thead>
+          <tbody>
+          {% for node in nodes %}<tr>
+            <td class="font-monospace">{{ node.node_number }}</td><td class="fw-medium">{{ node.name }}</td>
+            {% if advanced_networks %}<td>{% if is_writer() %}<form class="d-flex gap-2" method="post" action="{{ url_for('assign_network', node_id=node.id) }}"><select class="form-select form-select-sm" name="network_id" aria-label="Network for {{ node.name }}"><option value="">Default network</option>{% for network in networks %}<option value="{{ network.id }}" {% if node.network_id == network.id %}selected{% endif %}>{{ network.name }}</option>{% endfor %}</select><button class="btn btn-sm btn-outline-primary" type="submit">Save</button></form>{% else %}<span>{{ node_network_names[node.id] }}</span>{% endif %}</td>{% endif %}
+            <td class="text-end"><div class="d-inline-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('node_configuration', node_id=node.id) }}">Settings</a>{% if is_writer() %}<form method="post" action="{{ url_for('delete_node', node_id=node.id) }}" onsubmit="return confirm('Remove this node and regenerate configuration?')"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>{% endif %}</div></td>
+          </tr>{% else %}<tr><td colspan="4" class="text-center text-body-secondary py-4">No nodes configured yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if is_writer() %}<div class="card-body border-top d-flex flex-wrap align-items-center justify-content-between gap-3">
+        <div><h3 class="h6 mb-1">Add a node</h3><p class="small text-body-secondary mb-0">Follow a short setup to choose its operating mode and radio interface.</p></div>
+        <a class="btn btn-primary" href="{{ url_for('node_setup') }}">Guided node setup</a>
+      </div>{% endif %}
+    </section>
+
+    <section class="card shadow-sm">
+      <div class="card-header bg-white py-3"><h2 class="h5 mb-0">Recent changes</h2></div>
+      <div class="list-group list-group-flush">
+      {% for change in changes %}<div class="list-group-item py-3"><div class="d-flex flex-wrap justify-content-between gap-2"><strong>{{ change.summary }}</strong><time class="small text-body-secondary">{{ change.created_at }}</time></div><div class="small text-body-secondary">{{ change.actor }}</div><code class="d-block small mt-2 text-break">{{ change.details|tojson }}</code></div>
+      {% else %}<div class="list-group-item text-body-secondary">No changes recorded.</div>{% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <div class="col-lg-4">
+    <section class="card shadow-sm mb-4">
+      <div class="card-header bg-white py-3"><h2 class="h5 mb-0">Network profiles</h2></div>
+      <ul class="list-group list-group-flush">{% for network in networks %}<li class="list-group-item d-flex justify-content-between align-items-center">{{ network.name }}{% if network.stable_key == default_network %}<span class="badge text-bg-primary">Default</span>{% endif %}</li>{% else %}<li class="list-group-item text-body-secondary">No network profiles.</li>{% endfor %}</ul>
+      {% if is_writer() %}<div class="card-body border-top">
+        <form class="mb-3" method="post" action="{{ url_for('default_network') }}"><label class="form-label" for="default-network">Default network</label><div class="input-group"><select class="form-select" id="default-network" name="network_id">{% for network in networks %}<option value="{{ network.id }}" {% if network.stable_key == default_network %}selected{% endif %}>{{ network.name }}</option>{% endfor %}</select><button class="btn btn-outline-primary" type="submit">Save</button></div></form>
+        <form class="d-flex justify-content-between align-items-center border rounded p-3 mb-3" method="post" action="{{ url_for('network_selection') }}"><span class="small">Advanced per-node selection</span><input type="hidden" name="enabled" value="{{ 'false' if advanced_networks else 'true' }}"><button class="btn btn-sm {{ 'btn-outline-secondary' if advanced_networks else 'btn-outline-primary' }}" type="submit">{{ 'Disable' if advanced_networks else 'Enable' }}</button></form>
+        <form class="mb-4" method="post" enctype="multipart/form-data" action="{{ url_for('import_network') }}"><label class="form-label" for="network-upload">Import network JSON</label><input class="form-control" id="network-upload" type="file" name="network" accept="application/json,.json" required><div class="form-text">Existing profiles with the same key will be updated.</div><button class="btn btn-outline-primary mt-2" type="submit">Preview import</button></form>
+        <hr><h3 class="h6">Add a network manually</h3>
+        <form method="post" action="{{ url_for('create_network') }}">
+          <div class="mb-3"><label class="form-label" for="network-key">Stable key</label><input class="form-control" id="network-key" name="key" pattern="[a-zA-Z0-9._\-]+" maxlength="120" required></div>
+          <div class="mb-3"><label class="form-label" for="network-name">Name</label><input class="form-control" id="network-name" name="name" maxlength="200" required></div>
+          <div class="mb-3"><label class="form-label" for="network-config">Configuration JSON</label><textarea class="form-control font-monospace" id="network-config" name="config" rows="5">{}</textarea></div>
+          <button class="btn btn-outline-primary" type="submit">Preview network</button>
+        </form>
+      </div>{% endif %}
+    </section>
+
+    {% if is_writer() %}<section class="card shadow-sm mb-4"><div class="card-body">
+      <h2 class="h5">Database backup</h2><p class="text-body-secondary small">Download a copy of the current SQLite database.</p>
+      <a class="btn btn-outline-primary" href="{{ url_for('backup') }}">Download backup</a>
+    </div></section>{% endif %}
+
+    {% if is_writer() %}<section class="card shadow-sm border-warning-subtle"><div class="card-body">
+      <h2 class="h5">Restore database</h2><p class="text-body-secondary small">Restoring replaces the current database and regenerates configuration files.</p>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('restore') }}" onsubmit="return confirm('Restore this database and regenerate configuration?')"><label class="form-label" for="database-file">SQLite backup</label><input class="form-control" id="database-file" type="file" name="database" accept=".sqlite,.sqlite3,.db" required><button class="btn btn-outline-danger mt-3" type="submit">Restore database</button></form>
+    </div></section>{% endif %}
+  </div>
+</div>
+{% endblock %}
