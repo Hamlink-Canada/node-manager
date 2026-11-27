@@ -22,7 +22,7 @@ def _alembic_config(database):
 
 def test_migration_graph_has_one_head():
     config = _alembic_config("/tmp/unused-node-manager-test.sqlite3")
-    assert ScriptDirectory.from_config(config).get_heads() == ["0003_explicit_node_settings"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0004_network_profile_controls"]
 
 
 def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path):
@@ -38,6 +38,8 @@ def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path
     }
     with engine.connect() as connection:
         assert connection.execute(text("SELECT stable_key FROM networks")).scalars().all() == ["allstarlink"]
+        assert connection.execute(text(
+            "SELECT value FROM settings WHERE key='network_profiles_enabled'")).scalar_one() == "false"
     engine.dispose()
 
 

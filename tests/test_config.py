@@ -12,6 +12,7 @@ def test_settings_load_toml_and_environment_overrides(monkeypatch, tmp_path):
 
     settings = load_settings(config)
     assert settings.database == ":memory:"
+    assert settings.network_profiles_directory == Path("/etc/asterisk-node-manager/networks")
     assert settings.asterisk_directory == Path("./etc-asterisk")
     assert settings.listen_address == "0.0.0.0"
     assert settings.port == 9876

@@ -12,6 +12,7 @@ services:
       - "127.0.0.1:8765:8765"
     volumes:
       - demo-output:/demo-output
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     restart: unless-stopped
 
 volumes:

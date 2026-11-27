@@ -9,6 +9,7 @@ case "$1" in
       --shell /usr/sbin/nologin asterisk-node-manager || true
     install -d -o asterisk-node-manager -g asterisk-node-manager -m 0750 /var/lib/asterisk-node-manager
     install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager
+    install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager/networks
     if [ ! -e /etc/asterisk-node-manager/secret-key ]; then
       umask 077
       python3 -c 'import secrets; print(secrets.token_urlsafe(48))' > /etc/asterisk-node-manager/secret-key

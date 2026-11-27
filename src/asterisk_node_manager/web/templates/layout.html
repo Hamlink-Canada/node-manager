@@ -29,6 +29,11 @@
         {% if session.get('username') %}
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
           <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Overview</a></li>
+          {% if network_profiles_enabled %}<li class="nav-item"><a class="nav-link" href="{{ url_for('networks_page') }}">Network profiles</a></li>{% endif %}
+          {% if is_writer() %}
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('settings_page') }}">Settings</a></li>
+          <li class="nav-item"><a class="nav-link" href="{{ url_for('backup_restore_page') }}">Backup &amp; Restore</a></li>
+          {% endif %}
           <li class="nav-item"><a class="nav-link" href="{{ url_for('diagnostics') }}">Diagnostics</a></li>
         </ul>
         <div class="d-flex align-items-center gap-3 ms-lg-auto">

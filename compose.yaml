@@ -16,6 +16,7 @@ services:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
       - ./docker/writers:/etc/asterisk-node-manager/writers
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     depends_on:
       writer:
         condition: service_healthy
@@ -39,6 +40,7 @@ services:
       - writer-run:/run/asterisk-node-manager
       - /var/run/asterisk:/var/run/asterisk
       - ${ASTERISK_CONFIG_DIRECTORY:-./asterisk-config}:/etc/asterisk
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     healthcheck:
       test: ["CMD", "python", "-c", "from pathlib import Path; import sys; sys.exit(0 if Path('/run/asterisk-node-manager/writer.sock').is_socket() else 1)"]
       interval: 2s

@@ -158,6 +158,8 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
+    enabled = client.post("/settings", data={"network_profiles_enabled": "true"})
+    assert enabled.status_code == 302
 
     profile = {"schema_version": 1.0, "key": "example.net", "name": "Example network",
                "config": {"register": True, "server": "example.invalid"}}
@@ -385,9 +387,16 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
+    assert b"Download backup" not in client.get("/").data
+    assert b"Network profiles" not in client.get("/").data
+    assert client.get("/networks").status_code == 404
+    assert b"Default network" in client.get("/settings").data
+    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 302
     enabled = client.post("/settings/network-selection", data={"enabled": "true"})
     assert enabled.status_code == 302
-    assert b"Per-node network selection" in client.get("/").data
+    assert b"Advanced per-node network selection" in client.get("/networks").data
+    assert b"Network profiles" in client.get("/").data
+    assert b"Download backup" not in client.get("/").data
 
     sessions = session_factory(settings.database)
     try:
@@ -405,6 +414,21 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
         assert b"assign_network" not in page.data
     finally:
         _dispose(sessions, settings.database)
+
+
+def test_backup_restore_has_its_own_menu_page(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    assert b"Backup &amp; Restore" in client.get("/").data
+    assert b"Download backup" not in client.get("/").data
+    page = client.get("/backup-restore")
+    assert page.status_code == 200
+    assert b"Download backup" in page.data
+    assert b"Restore database" in page.data
 
 
 def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exist(monkeypatch, tmp_path):

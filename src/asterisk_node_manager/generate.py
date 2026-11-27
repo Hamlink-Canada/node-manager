@@ -69,7 +69,9 @@ def render_database(database: str | Path) -> dict[str, bytes]:
         settings = {row.key: row.value for row in session.scalars(select(Setting))}
         default_key = settings.get("default_network_key", "")
         default_network = session.scalar(select(Network).where(Network.stable_key == default_key))
-        advanced_networks = settings.get("advanced_node_networks", "false").lower() == "true"
+        profiles_enabled = settings.get("network_profiles_enabled", "false").lower() == "true"
+        advanced_networks = (profiles_enabled
+                             and settings.get("advanced_node_networks", "false").lower() == "true")
         nodes = list(session.scalars(select(Node).order_by(Node.node_number)))
         simpleusb_fields = node_fields_for_file("simpleusb.conf")
         file_values = list(session.scalars(select(ConfigValue).order_by(

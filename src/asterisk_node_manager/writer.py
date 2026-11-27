@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import grp
 import json
+import logging
 import os
 import socket
-import subprocess
 import stat
+import subprocess
 import tempfile
-import grp
+from pathlib import Path
 
 import pam
-from pathlib import Path
 
 from .config import load_settings
 from .database import database_exists
+from .networks import load_network_profiles
 from .generate import render_database
 
 ALLOWED_OPERATIONS = {"generate", "diagnostic", "authenticate"}
@@ -122,7 +124,14 @@ def _replace_files(directory: Path, files: dict[str, bytes]) -> None:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    if not settings.demo_mode and database_exists(settings.database):
+        loaded_profiles = load_network_profiles(
+            settings.network_profiles_directory, settings.database)
+        if loaded_profiles:
+            logging.getLogger(__name__).info("Loaded %d network profile files from %s",
+                                             loaded_profiles, settings.network_profiles_directory)
     server, owns_socket_path = _open_server_socket(settings)
     try:
         # Reconcile interrupted publication before serving clients when a database exists.

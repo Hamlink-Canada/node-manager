@@ -35,6 +35,13 @@ the root-managed writer allowlist. Manage that allowlist with the root-only
 commands astnode writers add USERNAME and astnode writers remove USERNAME.
 The network profile upload format is documented in
 docs/network-profile.schema.json.
+Network profiles are disabled by default. Enable them from the web app's
+Settings page to show the profile manager. On startup, the web and writer
+services scan `paths.network_profiles_directory` (default
+`/etc/asterisk-node-manager/networks`) for `*.json` profiles and insert or
+update records by profile key. In Docker Compose, place profiles in the local
+`network-profiles/` directory. The AllStarLink profile remains the only
+network seeded by the database migration.
 
 See docs/architecture.md for the local writer, PAM, migration, backup, and
 import workflows.
