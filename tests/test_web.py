@@ -121,6 +121,7 @@ def test_profile_availability_is_read_only_dynaconf_configuration(tmp_path):
 
     assert client.get("/networks").status_code == 404
     assert client.get("/settings").status_code == 404
+    assert b'id="networksMenu"' not in client.get("/").data
     assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 404
     assert client.post("/settings/network-selection", data={"enabled": "true"}).status_code == 404
 
@@ -281,6 +282,16 @@ def test_network_add_and_import_are_separate_pages(tmp_path):
     assert b"href=\"/networks/add\"" in overview.data
     assert b"href=\"/networks/import\"" in overview.data
     assert b'name="config"' not in overview.data
+    navbar = client.get("/").data
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="nodesMenu"' in navbar
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="networksMenu"' in navbar
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="toolsMenu"' in navbar
+    assert b">Nodes</button>" in navbar
+    assert b">Networks</button>" in navbar
+    assert b">Tools</button>" in navbar
+    assert b'class="dropdown-item" href="/changes">Recent changes</a>' in navbar
+    assert b'class="dropdown-item" href="/files">Configuration files</a>' in navbar
+    assert b'<a class="nav-link" href="/changes">' not in navbar
     add_page = client.get("/networks/add")
     assert add_page.status_code == 200
     assert b'value="4569"' in add_page.data
