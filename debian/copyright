@@ -14,3 +14,26 @@ License: GPL-3.0-or-later
  WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
  or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
  for more details.
+
+Files: src/asterisk_node_manager/conf/base/*.conf.j2
+Copyright: AllStarLink app_rpt contributors
+License: GPL-2.0-only
+ These configuration baselines are derived from AllStarLink/app_rpt's
+ configs/rpt examples. See the upstream repository and the included
+ LICENSE.GPL-2.0-only file for license terms.
+
+Files: src/asterisk_node_manager/conf/base/LICENSE.GPL-2.0-only
+Copyright: Free Software Foundation, Inc.
+License: GPL-2.0-only
+ This is the GNU General Public License version 2 text. See the file for
+ its full terms.
+
+License: GPL-2.0-only
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License version 2 only,
+ as published by the Free Software Foundation.
+ .
+ This package is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ included LICENSE.GPL-2.0-only file for the complete license text.

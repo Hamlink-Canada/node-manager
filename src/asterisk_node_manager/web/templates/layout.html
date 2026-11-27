@@ -28,8 +28,34 @@
       <div class="collapse navbar-collapse" id="mainNav">
         {% if session.get('username') %}
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-          <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Overview</a></li>
-          <li class="nav-item"><a class="nav-link" href="{{ url_for('diagnostics') }}">Diagnostics</a></li>
+          <li class="nav-item dropdown">
+            <button class="nav-link dropdown-toggle" type="button" id="nodesMenu" data-bs-toggle="dropdown" aria-expanded="false">Nodes</button>
+            <ul class="dropdown-menu" aria-labelledby="nodesMenu">
+              <li><a class="dropdown-item" href="{{ url_for('index') }}">Overview</a></li>
+              {% if is_writer() %}<li><a class="dropdown-item" href="{{ url_for('node_setup') }}">Guided node setup</a></li>{% endif %}
+            </ul>
+          </li>
+          {% if network_profiles_enabled %}
+          <li class="nav-item dropdown">
+            <button class="nav-link dropdown-toggle" type="button" id="networksMenu" data-bs-toggle="dropdown" aria-expanded="false">Networks</button>
+            <ul class="dropdown-menu" aria-labelledby="networksMenu">
+              <li><a class="dropdown-item" href="{{ url_for('networks_page') }}">Network profiles</a></li>
+              {% if is_writer() %}
+              <li><a class="dropdown-item" href="{{ url_for('add_network_page') }}">Add network</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('import_network_page') }}">Import network</a></li>
+              {% endif %}
+            </ul>
+          </li>
+          {% endif %}
+          <li class="nav-item dropdown">
+            <button class="nav-link dropdown-toggle" type="button" id="toolsMenu" data-bs-toggle="dropdown" aria-expanded="false">Tools</button>
+            <ul class="dropdown-menu" aria-labelledby="toolsMenu">
+              <li><a class="dropdown-item" href="{{ url_for('files') }}">Configuration files</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('diagnostics') }}">Diagnostics</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('changes_page') }}">Recent changes</a></li>
+              {% if is_writer() %}<li><a class="dropdown-item" href="{{ url_for('backup_restore_page') }}">Backup &amp; Restore</a></li>{% endif %}
+            </ul>
+          </li>
         </ul>
         <div class="d-flex align-items-center gap-3 ms-lg-auto">
           {% if demo_mode %}

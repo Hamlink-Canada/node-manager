@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager \
        --home-dir /nonexistent --no-create-home asterisk-node-manager \
     && install -d -o asterisk-node-manager -g asterisk-node-manager \
-       /var/lib/asterisk-node-manager /etc/asterisk-node-manager \
+       /var/lib/asterisk-node-manager /etc/asterisk-node-manager /etc/asterisk-node-manager/networks \
     && install -m 0640 /dev/null /etc/asterisk-node-manager/writers
 
 WORKDIR /app

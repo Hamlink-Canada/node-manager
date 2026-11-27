@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-import json
-import os
-import socket
-import subprocess
-import stat
-import tempfile
 import grp
-
-import pam
+import json
+import logging
+import os
+import signal
+import socket
+import stat
+import subprocess
+import tempfile
 from pathlib import Path
 
+import pam
+
 from .config import load_settings
-from .database import database_exists
+from .database import database_exists, database_write_lock
+from .networks import load_network_profiles
 from .generate import render_database
 
 ALLOWED_OPERATIONS = {"generate", "diagnostic", "authenticate"}
@@ -22,6 +25,13 @@ DIAGNOSTIC_COMMANDS = {
     "core show version", "core show uptime", "core show channels",
     "iax2 show peers", "rpt show nodes", "module show",
 }
+
+
+def _handle_shutdown(signum, _frame):
+    logging.getLogger(__name__).info("Received signal %s; stopping writer", signum)
+    # SystemExit unwinds main()'s finally block, which closes and removes the
+    # Unix socket. The handler is required because this process may run as PID 1.
+    raise SystemExit(0)
 
 
 def handle_request(request: bytes, settings) -> dict:
@@ -59,7 +69,9 @@ def handle_request(request: bytes, settings) -> dict:
             return {"ok": False, "error": f"Asterisk command failed: {exc}"}
         return {"ok": result.returncode == 0, "output": result.stdout or result.stderr}
     try:
-        generated = render_database(settings.database)
+        generated = render_database(
+            settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+            default_network=settings.default_network)
         _replace_files(settings.asterisk_directory, generated)
     except Exception as exc:
         return {"ok": False, "error": f"generation failed: {exc}"}
@@ -100,7 +112,7 @@ def _replace_files(directory: Path, files: dict[str, bytes]) -> None:
                 staged[name] = Path(stream.name)
         for name, temporary in staged.items():
             os.replace(temporary, directory / name)
-    except Exception:
+    except BaseException:
         for name, previous in snapshots.items():
             target = directory / name
             if previous is None:
@@ -122,12 +134,24 @@ def _replace_files(directory: Path, files: dict[str, bytes]) -> None:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
+    if not settings.demo_mode and database_exists(settings.database):
+        with database_write_lock(settings.database):
+            loaded_profiles = load_network_profiles(
+                settings.network_profiles_directory, settings.database)
+        if loaded_profiles:
+            logging.getLogger(__name__).info("Loaded %d network profile files from %s",
+                                             loaded_profiles, settings.network_profiles_directory)
     server, owns_socket_path = _open_server_socket(settings)
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
     try:
         # Reconcile interrupted publication before serving clients when a database exists.
         if not settings.demo_mode and database_exists(settings.database):
-            _replace_files(settings.asterisk_directory, render_database(settings.database))
+            _replace_files(settings.asterisk_directory, render_database(
+                settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+                default_network=settings.default_network))
         while True:
             connection, _ = server.accept()
             with connection:

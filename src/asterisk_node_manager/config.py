@@ -15,6 +15,7 @@ DEFAULTS = {
         "asterisk_directory": "/etc/asterisk",
         "writer_socket": "/run/asterisk-node-manager/writer.sock",
         "writer_allowlist": "/etc/asterisk-node-manager/writers",
+        "network_profiles_directory": "/etc/asterisk-node-manager/networks",
         "asterisk_cli": "/usr/sbin/asterisk",
         "demo_output_directory": "/tmp/asterisk-node-manager-demo",
     },
@@ -24,6 +25,10 @@ DEFAULTS = {
         "pam_service": "asterisk-node-manager",
         "secret_key_file": "/etc/asterisk-node-manager/secret-key",
         "demo_mode": False,
+    },
+    "networks": {
+        "profiles_enabled": False,
+        "default_network": "allstarlink",
     },
 }
 
@@ -35,6 +40,7 @@ class Settings:
     asterisk_directory: Path = Path(DEFAULTS["paths"]["asterisk_directory"])
     writer_socket: Path = Path(DEFAULTS["paths"]["writer_socket"])
     writer_allowlist: Path = Path(DEFAULTS["paths"]["writer_allowlist"])
+    network_profiles_directory: Path = Path(DEFAULTS["paths"]["network_profiles_directory"])
     asterisk_cli: Path = Path(DEFAULTS["paths"]["asterisk_cli"])
     listen_address: str = DEFAULTS["web"]["listen_address"]
     port: int = DEFAULTS["web"]["port"]
@@ -42,6 +48,8 @@ class Settings:
     secret_key_file: Path = Path(DEFAULTS["web"]["secret_key_file"])
     demo_mode: bool = DEFAULTS["web"]["demo_mode"]
     demo_output_directory: Path = Path(DEFAULTS["paths"]["demo_output_directory"])
+    network_profiles_enabled: bool = DEFAULTS["networks"]["profiles_enabled"]
+    default_network: str = DEFAULTS["networks"]["default_network"]
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
@@ -67,6 +75,14 @@ def load_settings(path: str | Path | None = None) -> Settings:
     env_loader.load(settings, env="ASTNODE")
 
     demo_mode = _as_bool(settings.WEB.DEMO_MODE, "web.demo_mode")
+    network_profiles_enabled = _as_bool(settings.NETWORKS.PROFILES_ENABLED,
+                                        "networks.profiles_enabled")
+    default_network_value = settings.NETWORKS.DEFAULT_NETWORK
+    if not isinstance(default_network_value, str):
+        raise TypeError("networks.default_network must be a profile key string")
+    default_network = default_network_value.strip()
+    if not default_network:
+        raise ValueError("networks.default_network must not be empty")
     if demo_mode:
         # Demo data must never touch a configured production database. SQLite's
         # in-memory database is scoped to this application process.
@@ -89,6 +105,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         asterisk_directory=_path(settings.PATHS.ASTERISK_DIRECTORY, "paths.asterisk_directory"),
         writer_socket=_path(settings.PATHS.WRITER_SOCKET, "paths.writer_socket"),
         writer_allowlist=_path(settings.PATHS.WRITER_ALLOWLIST, "paths.writer_allowlist"),
+        network_profiles_directory=_path(settings.PATHS.NETWORK_PROFILES_DIRECTORY,
+                                          "paths.network_profiles_directory"),
         asterisk_cli=_path(settings.PATHS.ASTERISK_CLI, "paths.asterisk_cli"),
         listen_address=str(settings.WEB.LISTEN_ADDRESS),
         port=port,
@@ -97,6 +115,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
         demo_mode=demo_mode,
         demo_output_directory=_path(settings.PATHS.DEMO_OUTPUT_DIRECTORY,
                                      "paths.demo_output_directory"),
+        network_profiles_enabled=network_profiles_enabled,
+        default_network=default_network,
     )
 
 

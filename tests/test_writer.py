@@ -23,9 +23,17 @@ def test_writer_rejects_invalid_json_and_unsupported_operations(tmp_path):
         "ok": False, "error": "unsupported operation"
     }
     deeply_nested_json = b"[" * 10_000 + b"0" + b"]" * 10_000
-    assert writer.handle_request(deeply_nested_json, settings) == {
-        "ok": False, "error": "invalid JSON request"
-    }
+    deeply_nested_response = writer.handle_request(deeply_nested_json, settings)
+    # Python releases differ in whether json.loads rejects this nesting as a
+    # recursion error or parses it and lets the protocol reject the list root.
+    assert deeply_nested_response["ok"] is False
+    assert deeply_nested_response["error"] in {"invalid JSON request", "unsupported operation"}
+
+
+def test_writer_shutdown_handler_exits_through_cleanup_path():
+    with pytest.raises(SystemExit) as exc_info:
+        writer._handle_shutdown(15, None)
+    assert exc_info.value.code == 0
 
 
 def test_writer_response_reader_handles_large_replies_and_rejects_empty_reply():
@@ -105,6 +113,28 @@ def test_file_replacement_restores_all_original_files_on_failure(monkeypatch, tm
 
     monkeypatch.setattr(writer.os, "replace", fail_second_replace)
     with pytest.raises(OSError, match="simulated replace failure"):
+        writer._replace_files(directory, {"one.conf": b"new-one", "two.conf": b"new-two"})
+    assert (directory / "one.conf").read_bytes() == b"old-one"
+    assert (directory / "two.conf").read_bytes() == b"old-two"
+
+
+def test_file_replacement_rolls_back_before_propagating_shutdown(monkeypatch, tmp_path):
+    directory = tmp_path / "asterisk"
+    directory.mkdir()
+    (directory / "one.conf").write_bytes(b"old-one")
+    (directory / "two.conf").write_bytes(b"old-two")
+    original_replace = os.replace
+    calls = 0
+
+    def stop_during_second_replace(source, target):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise SystemExit(0)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(writer.os, "replace", stop_during_second_replace)
+    with pytest.raises(SystemExit):
         writer._replace_files(directory, {"one.conf": b"new-one", "two.conf": b"new-two"})
     assert (directory / "one.conf").read_bytes() == b"old-one"
     assert (directory / "two.conf").read_bytes() == b"old-two"

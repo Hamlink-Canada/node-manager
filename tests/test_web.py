@@ -3,6 +3,7 @@ import json
 from io import BytesIO
 
 import pytest
+from sqlalchemy import func, select
 
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import (
@@ -11,13 +12,27 @@ from asterisk_node_manager.database import (
     sqlite_snapshot,
 )
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import ConfigValue, CustomLine, Network, Node, Setting
+from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, CustomValue, Network,
+                                          Node, Setting, SimpleUSBSettings, USBRadioSettings)
 from asterisk_node_manager.web import create_app
 
 
 def _dispose(sessions, database):
     if not is_memory_database(database):
         sessions.kw["bind"].dispose()
+
+
+def _network_profile(key, name, **overrides):
+    profile = {
+        "schema_version": 2, "key": key, "name": name,
+        "registration_method": "http", "http_registration_server": "",
+        "iax_registration_server": "", "iax_registration_port": 4569,
+        "stats_enabled": False, "stats_post_url": "", "stats_post_interval": 60,
+        "node_lookup_method": "both", "dns_node_domain": "",
+        "max_dns_node_length": 6, "external_node_file": "",
+    }
+    profile.update(overrides)
+    return profile
 
 
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):
@@ -33,21 +48,66 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
     assert b"Demo Node North" in client.get("/").data
 
     sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        node = session.query(Node).filter_by(node_number=1000).one()
+        node.simpleusb_settings.devstr = "usb:1-2"
+        node.simpleusb_settings.serial = "SN-12345"
+        default_hangtime = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one_or_none()
+        if default_hangtime is None:
+            session.add(ConfigValue(file_name="rpt.conf", section="node-main", key="hangtime",
+                                    default_value="6000", secret=False))
+        else:
+            default_hangtime.value = "6000"
+    overview = client.get("/")
+    assert b"USB device" in overview.data
+    assert b"Identifier:" in overview.data
+    assert b"usb:1-2" in overview.data
+    assert b"SN-12345" in overview.data
+
     try:
         with sessions() as session:
             node_id = session.query(Node).filter_by(node_number=1000).one().id
         response = client.get(f"/nodes/{node_id}/configuration")
         assert response.status_code == 200
         assert b"Advanced settings" in response.data
+        assert b'data-reset-default="field-hangtime"' in response.data
+        assert b'Default: <code>6000</code>' in response.data
+        assert b'data-interface-panel="SimpleUSB"' in response.data
+        assert b'data-interface-panel="Radio" hidden' in response.data
+        assert b'name="usbradio_rxdemod"' in response.data
         saved = client.post(f"/nodes/{node_id}/configuration", data={
             "rxchannel": "SimpleUSB/1000", "duplex": "0", "hangtime": "5000",
+            "simpleusb_devstr": "usb:1-2", "simpleusb_serial": "SN-12345",
             "linktolink": "yes", "advanced_view": "yes",
         })
         assert saved.status_code == 302
+        with sessions() as session:
+            node = session.get(Node, node_id)
+            assert node.hangtime == 5000
+            assert node.duplex == 0
+            assert node.simpleusb_settings.devstr == "usb:1-2"
+            assert node.simpleusb_settings.serial == "SN-12345"
         generated_rpt = (settings.demo_output_directory / "rpt.conf").read_text()
         assert "linktolink = yes" in generated_rpt
         assert "duplex = 0" in generated_rpt
-        assert "rxboost = no" in (settings.demo_output_directory / "simpleusb.conf").read_text()
+        generated_simpleusb = (settings.demo_output_directory / "simpleusb.conf").read_text()
+        assert "rxboost = no" in generated_simpleusb
+        assert "devstr = usb:1-2" in generated_simpleusb
+        assert "serial = SN-12345" in generated_simpleusb
+        switched = client.post(f"/nodes/{node_id}/configuration", data={
+            "rxchannel": "Radio/1000", "duplex": "0", "hangtime": "5000",
+            "usbradio_rxdemod": "speaker", "usbradio_rxvoiceadj": "0.625",
+            "advanced_view": "yes",
+        })
+        assert switched.status_code == 302
+        with sessions() as session:
+            node = session.get(Node, node_id)
+            assert node.usbradio_settings.rxdemod == "speaker"
+            assert node.usbradio_settings.rxvoiceadj == "0.625"
+        generated_radio = (settings.demo_output_directory / "usbradio.conf").read_text()
+        assert "rxdemod = speaker" in generated_radio
+        assert "rxvoiceadj = 0.625" in generated_radio
     finally:
         _dispose(sessions, settings.database)
 
@@ -63,6 +123,7 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     client = app.test_client()
 
     assert client.get("/").status_code == 302
+    assert client.get("/changes").status_code == 302
     with client.session_transaction() as browser_session:
         browser_session["username"] = "reader"
     assert client.get("/").status_code == 200
@@ -70,6 +131,22 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     assert client.post("/nodes", data={"node_number": "1200", "name": "Unauthorized"}).status_code == 403
     assert client.get("/backup").status_code == 403
     assert b"Download backup" not in client.get("/").data
+
+
+def test_profile_availability_is_read_only_dynaconf_configuration(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=False)
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    assert client.get("/networks").status_code == 404
+    assert client.get("/settings").status_code == 404
+    assert b'id="networksMenu"' not in client.get("/").data
+    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 404
+    assert client.post("/settings/network-selection", data={"enabled": "true"}).status_code == 404
 
 
 def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path):
@@ -100,7 +177,7 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
             node = session.query(Node).filter_by(node_number=2345).one()
             assert node.name == "Workshop Repeater"
             assert node.rxchannel == "SimpleUSB/2345"
-            assert node.duplex == 2
+            assert node.duplex is None
             assert node.idrecording == "|iVE3ABC"
             assert node.simpleusb_settings is not None
 
@@ -108,6 +185,22 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
         assert "[2345]" in generated
         assert "idrecording = |iVE3ABC" in generated
         assert "rxchannel = SimpleUSB/2345" in generated
+
+        radio = client.post("/nodes/setup", data={
+            "node_number": "2347",
+            "name": "USB Radio Repeater",
+            "callsign": "VE3XYZ",
+            "profile": "full_duplex_repeater",
+            "interface": "Radio",
+        })
+        assert radio.status_code == 302
+        with sessions() as session:
+            radio_node = session.query(Node).filter_by(node_number=2347).one()
+            assert radio_node.usbradio_settings is not None
+            assert session.query(USBRadioSettings).count() == 1
+        generated_radio = (settings.demo_output_directory / "usbradio.conf").read_text()
+        assert "[2347]" in generated_radio
+        assert "rxdemod = flat" in generated_radio
 
         hub = client.post("/nodes/setup", data={
             "node_number": "2346",
@@ -119,7 +212,7 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
         assert hub.status_code == 302
         with sessions() as session:
             hub_node = session.query(Node).filter_by(node_number=2346).one()
-            assert hub_node.rxchannel == "Local/pseudo"
+            assert hub_node.rxchannel is None
             assert hub_node.duplex == 0
             assert hub_node.simpleusb_settings is None
     finally:
@@ -143,6 +236,23 @@ def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_pat
     })
     assert response.status_code == 200
     assert b"That Node ID is already configured." in response.data
+
+
+def test_node_creation_requires_at_least_four_digit_node_id(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    guided = client.post("/nodes/setup", data={
+        "node_number": "123", "name": "Short ID", "callsign": "VE3ABC",
+        "profile": "simplex_hotspot", "interface": "SimpleUSB",
+    })
+    assert guided.status_code == 200
+    assert b"at least four digits" in guided.data
+    assert client.post("/nodes", data={"node_number": "123", "name": "Short ID"}).status_code == 400
     sessions = session_factory(settings.database)
     try:
         with sessions() as session:
@@ -153,14 +263,17 @@ def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_pat
 
 def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
-
-    profile = {"schema_version": 1.0, "key": "example.net", "name": "Example network",
-               "config": {"register": True, "server": "example.invalid"}}
+    profile = _network_profile("example.net", "Example network",
+                               registration_method="iax", iax_registration_server="example.invalid",
+                               iax_registration_port=4570, stats_enabled=True,
+                               stats_post_url="https://stats.example.net/update",
+                               node_lookup_method="dns", dns_node_domain="nodes.example.net")
     preview = client.post("/networks/import", data={
         "network": (BytesIO(json.dumps(profile).encode()), "example.json")
     }, content_type="multipart/form-data")
@@ -168,8 +281,9 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     assert b"Example network" in preview.data
 
     committed = client.post("/networks/import", data={
-        "action": "commit", "schema_version": "1", "key": "example.net",
-        "name": "Example network", "config": json.dumps(profile["config"]),
+        "action": "commit", "schema_version": "2", **{
+            key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+            for key, value in profile.items()},
     })
     assert committed.status_code == 302
     sessions = session_factory(settings.database)
@@ -179,16 +293,148 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
             original_id = original.id
 
         replacement = client.post("/networks/import", data={
-            "action": "commit", "schema_version": "1", "key": "example.net",
-            "name": "Updated network", "config": json.dumps({"register": False}),
+            "action": "commit", **{
+                key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+                for key, value in _network_profile("example.net", "Updated network",
+                    registration_method="http", http_registration_server="updated.invalid").items()},
         })
         assert replacement.status_code == 302
         with sessions() as session:
             network = session.query(Network).filter_by(stable_key="example.net").one()
             assert network.id == original_id
             assert network.name == "Updated network"
-            assert network.config == {"register": False}
+            assert network.http_registration_server == "updated.invalid"
+            assert network.registration_method is None
             assert session.query(Network).filter_by(stable_key="allstarlink").count() == 1
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_network_add_and_import_are_separate_pages(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    overview = client.get("/networks")
+    assert b"href=\"/networks/add\"" in overview.data
+    assert b"href=\"/networks/import\"" in overview.data
+    assert b'name="config"' not in overview.data
+    navbar = client.get("/").data
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="nodesMenu"' in navbar
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="networksMenu"' in navbar
+    assert b'<button class="nav-link dropdown-toggle" type="button" id="toolsMenu"' in navbar
+    assert b">Nodes</button>" in navbar
+    assert b">Networks</button>" in navbar
+    assert b">Tools</button>" in navbar
+    assert b'class="dropdown-item" href="/changes">Recent changes</a>' in navbar
+    assert navbar.index(b'id="toolsMenu"') < navbar.index(b'href="/changes">Recent changes</a>')
+    assert navbar.index(b'href="/changes">Recent changes</a>') < navbar.index(b"</ul>", navbar.index(b'id="toolsMenu"'))
+    assert b'class="dropdown-item" href="/files">Configuration files</a>' in navbar
+    assert b'<a class="nav-link" href="/changes">' not in navbar
+    add_page = client.get("/networks/add")
+    assert add_page.status_code == 200
+    assert b'value="4569"' in add_page.data
+    assert b'data-reset-default="field-iax_registration_port"' in add_page.data
+    assert b'Stable key <span class="text-danger">(Required)</span>' in add_page.data
+    assert client.get("/networks/import").status_code == 200
+
+
+def test_recent_changes_have_their_own_paginated_page(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    sessions = session_factory(settings.database)
+    with sessions.begin() as db:
+        latest = db.scalar(select(func.max(Change.revision))) or 0
+        db.add_all(Change(actor="tester", summary=f"Pagination change {number}",
+                          revision=latest + number, details={})
+                   for number in range(1, 46))
+
+    overview = client.get("/")
+    assert b'href="/changes"' in overview.data
+    assert b"Pagination change 45" not in overview.data
+    assert b"Recent changes</h2>" not in overview.data
+
+    first_page = client.get("/changes")
+    assert b"Pagination change 45" in first_page.data
+    assert b"Pagination change 26" in first_page.data
+    assert b"Pagination change 25" not in first_page.data
+    assert b'aria-label="Recent changes pages"' in first_page.data
+
+    second_page = client.get("/changes?page=2")
+    assert b"Pagination change 25" in second_page.data
+    assert b"Pagination change 6" in second_page.data
+    assert b"Pagination change 26" not in second_page.data
+    assert b'aria-current="page">2</a>' in second_page.data
+
+    last_page = client.get("/changes?page=999")
+    assert b"Pagination change 5" in last_page.data
+    assert b"Pagination change 1" in last_page.data
+
+
+def test_recent_changes_pagination_bounds_numbered_links(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    with sessions.begin() as db:
+        latest = db.scalar(select(func.max(Change.revision))) or 0
+        db.add_all(Change(actor="tester", summary=f"Change {number}",
+                          revision=latest + number, details={})
+                   for number in range(1, 2001))
+    page = client.get("/changes?page=50")
+    assert page.status_code == 200
+    assert page.data.count(b'class="page-link"') <= 11
+    assert b">1</a>" in page.data
+    assert b">101</a>" in page.data
+    assert "…".encode() in page.data
+
+
+def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    profile = _network_profile("manual.example", "Manual Network",
+                               registration_method="iax", iax_registration_server="iax.example.net",
+                               iax_registration_port=4568, stats_enabled=True,
+                               stats_post_url="https://stats.example.net/update",
+                               node_lookup_method="both", dns_node_domain="nodes.example.net",
+                               max_dns_node_length=7,
+                               external_node_file="/var/lib/asterisk/nodes")
+    form = {key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+            for key, value in profile.items()}
+    preview = client.post("/networks/manual", data=form)
+    assert preview.status_code == 200
+    assert b"IAX registration server" in preview.data
+    assert b"nodes.example.net" in preview.data
+
+    saved = client.post("/networks/manual", data={**form, "action": "commit"})
+    assert saved.status_code == 302
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            network = session.query(Network).filter_by(stable_key="manual.example").one()
+            assert network.registration_method == "iax"
+            assert network.iax_registration_port == 4568
+            assert network.stats_enabled is True
+            assert network.stats_post_url == "https://stats.example.net/update"
+            assert network.node_lookup_method is None
+            assert network.max_dns_node_length == 7
+            assert network.external_node_file == "/var/lib/asterisk/nodes"
     finally:
         _dispose(sessions, settings.database)
 
@@ -303,9 +549,101 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
         with sessions() as session:
             node = session.query(Node).filter_by(node_number=1000).one()
             assert node.simpleusb_settings.rxmixerset == 600
-            custom = session.query(ConfigValue).filter_by(
+            custom = session.query(CustomValue).filter_by(
                 file_name="simpleusb.conf", section="1000", key="customdriveroption").one()
             assert custom.value == "kept"
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_advanced_usbradio_file_editor_saves_typed_and_unknown_fields(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    content = "[1000]\nrxdemod=speaker\nrxvoiceadj=0.625\ncustomdriveroption=kept\n"
+
+    preview = client.post("/files/usbradio.conf", data={"action": "preview", "content": content})
+    assert preview.status_code == 200
+    committed = client.post("/files/usbradio.conf", data={
+        "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+    })
+    assert committed.status_code == 302
+
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1000).one()
+            assert node.usbradio_settings.rxdemod == "speaker"
+            assert node.usbradio_settings.rxvoiceadj == "0.625"
+            custom = session.query(CustomValue).filter_by(
+                file_name="usbradio.conf", section="1000", key="customdriveroption").one()
+            assert custom.value == "kept"
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_rpt_editor_uses_submitted_node_defaults_for_overrides(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        default = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one()
+        default.value = "5000"
+    content = "[1000]\nhangtime=5000\n[node-main]\nhangtime=6000\n"
+
+    preview = client.post("/files/rpt.conf", data={"action": "preview", "content": content})
+    assert preview.status_code == 200
+    committed = client.post("/files/rpt.conf", data={
+        "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+    })
+    assert committed.status_code == 302
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1000).one()
+            assert node.hangtime == 5000
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_rpt_editor_does_not_normalize_against_removed_custom_defaults(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        primary = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one()
+        primary.value = "5000"
+        session.add(CustomValue(file_name="rpt.conf", section="node-main", key="hangtime",
+                                value="6000", secret=False))
+    content = "[1000]\nhangtime=6000\n"
+
+    preview = client.post("/files/rpt.conf", data={"action": "preview", "content": content})
+    assert preview.status_code == 200
+    committed = client.post("/files/rpt.conf", data={
+        "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+    })
+    assert committed.status_code == 302
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1000).one()
+            assert node.hangtime == 6000
+        generated = (settings.demo_output_directory / "rpt.conf").read_text()
+        assert "hangtime = 6000" in generated
     finally:
         _dispose(sessions, settings.database)
 
@@ -366,6 +704,34 @@ def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
         _dispose(sessions, settings.database)
 
 
+def test_primary_secret_values_are_restored_when_hidden_editor_value_is_unchanged(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    try:
+        with sessions.begin() as db:
+            db.add(ConfigValue(file_name="iax.conf", section="general", key="secret",
+                               default_value="primary-password", secret=True))
+        _dispose(sessions, settings.database)
+        page = client.get("/files/iax.conf")
+        assert b"secret = [hidden]" in page.data
+        content = "[general]\nsecret = [hidden]\n"
+        saved = client.post("/files/iax.conf", data={
+            "action": "commit", "confirmed": "yes", "content": content,
+            "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+        })
+        assert saved.status_code == 302
+        rendered = (settings.demo_output_directory / "iax.conf").read_text()
+        assert "secret = primary-password" in rendered
+        assert "secret = [hidden]" not in rendered
+    finally:
+        _dispose(sessions, settings.database)
+
+
 def test_login_ignores_external_redirect_and_rejects_oversized_node_number(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
@@ -380,19 +746,33 @@ def test_login_ignores_external_redirect_and_rejects_oversized_node_number(tmp_p
 
 def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
+    assert b"Download backup" not in client.get("/").data
+    assert b"Network profiles" in client.get("/").data
+    assert client.get("/networks").status_code == 200
+    assert client.get("/settings").status_code == 404
+    assert b'href="/settings"' not in client.get("/").data
+    assert client.post("/settings", data={"network_profiles_enabled": "false"}).status_code == 404
+    assert b'name="network_id"' not in client.get("/networks").data
+    assert client.post("/settings/default-network", data={"network_id": "1"}).status_code == 404
     enabled = client.post("/settings/network-selection", data={"enabled": "true"})
     assert enabled.status_code == 302
-    assert b"Per-node network selection" in client.get("/").data
+    assert b"Advanced per-node network selection" in client.get("/networks").data
+    assert b'name="network_id"' in client.get("/networks").data
+    assert client.post("/settings/default-network", data={"network_id": "1"}).status_code == 302
+    assert b"Network profiles" in client.get("/").data
+    assert b"Download backup" not in client.get("/").data
 
     sessions = session_factory(settings.database)
     try:
         with sessions() as session:
             assert session.get(Setting, "advanced_node_networks").value == "true"
+            assert session.get(Setting, "default_network_key").value == "allstarlink"
         with sessions.begin() as session:
             session.add(Node(node_number=9044, name="Read-only target"))
         _dispose(sessions, settings.database)
@@ -405,6 +785,21 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
         assert b"assign_network" not in page.data
     finally:
         _dispose(sessions, settings.database)
+
+
+def test_backup_restore_has_its_own_menu_page(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    assert b"Backup &amp; Restore" in client.get("/").data
+    assert b"Download backup" not in client.get("/").data
+    page = client.get("/backup-restore")
+    assert page.status_code == 200
+    assert b"Download backup" in page.data
+    assert b"Restore database" in page.data
 
 
 def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exist(monkeypatch, tmp_path):
@@ -434,15 +829,28 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
 
 def test_web_main_logs_mode_and_listen_address(monkeypatch, caplog):
     import logging
+    import signal
     from asterisk_node_manager import web
 
     settings = Settings(database=":memory:", demo_mode=True, listen_address="127.0.0.1", port=8765)
+    installed_handlers = {}
     monkeypatch.setattr(web, "load_settings", lambda: settings)
     monkeypatch.setattr(web, "create_app", lambda _settings: object())
     monkeypatch.setattr(web, "serve", lambda _app, **_kwargs: None)
+    monkeypatch.setattr(web.signal, "signal", lambda signum, handler: installed_handlers.update({signum: handler}))
 
     with caplog.at_level(logging.INFO):
         assert web.main() == 0
 
     assert "Starting node-manager web service in demo mode" in caplog.text
     assert "Listening on http://127.0.0.1:8765" in caplog.text
+    assert installed_handlers[signal.SIGTERM] is web._handle_shutdown
+    assert installed_handlers[signal.SIGINT] is web._handle_shutdown
+
+
+def test_web_shutdown_handler_exits_for_waitress_to_close(monkeypatch):
+    from asterisk_node_manager import web
+
+    with pytest.raises(SystemExit) as exc_info:
+        web._handle_shutdown(15, None)
+    assert exc_info.value.code == 0

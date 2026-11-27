@@ -1,5 +1,7 @@
 services:
   web:
+    init: true
+    stop_grace_period: 30s
     build:
       context: .
       args:
@@ -8,6 +10,8 @@ services:
     command: ["astnode-web"]
     environment:
       ASTNODE_WEB__DEMO_MODE: "false"
+      ASTNODE_NETWORKS__PROFILES_ENABLED: ${NETWORK_PROFILES_ENABLED:-false}
+      ASTNODE_NETWORKS__DEFAULT_NETWORK: ${DEFAULT_NETWORK:-allstarlink}
       ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /etc/asterisk
     ports:
@@ -16,12 +20,15 @@ services:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
       - ./docker/writers:/etc/asterisk-node-manager/writers
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     depends_on:
       writer:
         condition: service_healthy
     restart: unless-stopped
 
   writer:
+    init: true
+    stop_grace_period: 30s
     image: asterisk-node-manager:local
     build:
       context: .
@@ -33,12 +40,15 @@ services:
       ASTNODE_PATHS__DATABASE: /var/lib/asterisk-node-manager/manager.sqlite3
       ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /etc/asterisk
+      ASTNODE_NETWORKS__PROFILES_ENABLED: ${NETWORK_PROFILES_ENABLED:-false}
+      ASTNODE_NETWORKS__DEFAULT_NETWORK: ${DEFAULT_NETWORK:-allstarlink}
       ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-}
     volumes:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
       - /var/run/asterisk:/var/run/asterisk
       - ${ASTERISK_CONFIG_DIRECTORY:-./asterisk-config}:/etc/asterisk
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     healthcheck:
       test: ["CMD", "python", "-c", "from pathlib import Path; import sys; sys.exit(0 if Path('/run/asterisk-node-manager/writer.sock').is_socket() else 1)"]
       interval: 2s

@@ -4,16 +4,32 @@ The SQLite database is the configuration source of truth. SQLAlchemy defines
 the persistent model and Alembic upgrades the schema. The first migration
 creates the schema and seeds the initial network profile.
 
-Network profile config is stored and re-exported as an opaque JSON object.
-Its properties and how they map to Asterisk settings remain undefined until
-the profile format is specified.
+Network profile files are discovered from the configured profile directory on
+web and writer service startup. Each valid `*.json` file is upserted by its
+stable profile key; invalid files are skipped and logged. Dynaconf's
+`networks.profiles_enabled` option controls whether profile management and
+per-node profile assignment are available. When per-node multi-network mode is
+disabled, Dynaconf's `networks.default_network` selects the network used for
+all nodes. When per-node multi-network mode is enabled, the default can be
+selected in the web application and is stored in SQLite.
+
+Network profiles store their registration method and server addresses, status
+reporting options, and node lookup settings in explicit SQL columns. Profile
+JSON uses schema version 2 and lists these fields directly; arbitrary config
+objects are not stored. Status reporting and node lookup values are emitted as
+per-node `rpt.conf` settings. Registration server fields describe the service
+endpoint; registration directives still require credentials for each node.
 
 The astnode CLI and Flask application use the same library and database
 models. Flask templates and static assets live under the package's `web/`
 directory; Asterisk configuration templates live under `conf/`.
 Configuration-file edits and network profile uploads are validated and
 previewed before commit. A committed change is rendered into a fixed allowlist
-of Asterisk configuration filenames.
+of Asterisk configuration filenames. Each file starts from its packaged base
+configuration; database values replace matching defaults and typed node and
+network values replace their corresponding base values. The generated output
+contains the complete configuration and does not depend on Asterisk's
+`custom/` include directory. This includes `echolink.conf`.
 
 The web service runs as the asterisk-node-manager system user. It cannot
 write Asterisk configuration files. It connects to the root-owned,

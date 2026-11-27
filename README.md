@@ -5,8 +5,11 @@ repository provides a shared library, the astnode command, and a Flask web
 manager. SQLAlchemy models and Alembic migrations manage the SQLite store;
 bundled Jinja2 templates generate files consumed by Asterisk and apt-rpt.
 
-The project targets Python 3.11+ and Debian 12 and 13. It is licensed under
-GPL-3.0-or-later. See GLOSSARY.md for project terminology.
+The project targets Python 3.11+ and Debian 12 and 13. The application code is
+licensed under GPL-3.0-or-later. The bundled Asterisk configuration baselines
+are derived from AllStarLink/app_rpt and are licensed under GPL-2.0-only; see
+`src/asterisk_node_manager/conf/base/README.md`. See GLOSSARY.md for project
+terminology.
 
 ## Development installation
 
@@ -33,11 +36,42 @@ The web service binds to 127.0.0.1:8765 by default. Web access uses the host
 PAM service. PAM users can read configuration; write access is controlled by
 the root-managed writer allowlist. Manage that allowlist with the root-only
 commands astnode writers add USERNAME and astnode writers remove USERNAME.
-The network profile upload format is documented in
-docs/network-profile.schema.json.
+The application packages full base configurations for every managed Asterisk
+file. Database settings override matching baseline values, then the writer
+replaces the managed files with the rendered configuration. It does not rely
+on the host's `custom/` include directory. This includes `echolink.conf`.
+
+Network profiles use schema version 2 with explicit registration method and
+servers, status reporting URL and interval, node lookup method, DNS domain,
+maximum DNS node ID length, and external node file fields. These values are
+stored in separate SQLite columns; profiles do not accept an opaque config
+object. The upload format is documented in docs/network-profile.schema.json.
+Network profiles are disabled by default. Enable them in Dynaconf with
+`networks.profiles_enabled = true` (or
+`ASTNODE_NETWORKS__PROFILES_ENABLED=true`) and restart both services. In
+single-network mode, choose the network in Dynaconf with
+`networks.default_network` (or `ASTNODE_NETWORKS__DEFAULT_NETWORK`). When
+multi-network mode is enabled from the Network profiles page, the web app can
+set the default network there. On startup, the web and writer services scan
+`paths.network_profiles_directory` (default
+`/etc/asterisk-node-manager/networks`) for `*.json` profiles and insert or
+update records by profile key. In Docker Compose, place profiles in the local
+`network-profiles/` directory. The AllStarLink profile remains the only
+network seeded by the database migration.
+
+Module load directives and dialplan extension rules use dedicated database
+tables. The generated module list infers radio channel driver loading from
+configured node interfaces. Built-in extension rules remain stored alongside
+their custom overrides so a future rule editor can restore the packaged rule.
 
 See docs/architecture.md for the local writer, PAM, migration, backup, and
 import workflows.
+
+The project is still net new and has no supported prior database version. Its
+Alembic history is intentionally a single initial migration that creates the
+current schema from scratch. Earlier development migrations were consolidated
+and removed; the initial migration is not intended to upgrade databases made
+with those interim schemas.
 
 ## Packaging
 

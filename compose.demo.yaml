@@ -1,10 +1,14 @@
 services:
   demo:
+    init: true
+    stop_grace_period: 30s
     build: .
     image: asterisk-node-manager:local
     command: ["astnode-web"]
     environment:
       ASTNODE_WEB__DEMO_MODE: "true"
+      ASTNODE_NETWORKS__PROFILES_ENABLED: "true"
+      ASTNODE_NETWORKS__DEFAULT_NETWORK: "allstarlink"
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /demo-output
       ASTNODE_PATHS__DEMO_OUTPUT_DIRECTORY: /demo-output
       ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/no-helper.sock
@@ -12,6 +16,7 @@ services:
       - "127.0.0.1:8765:8765"
     volumes:
       - demo-output:/demo-output
+      - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     restart: unless-stopped
 
 volumes:

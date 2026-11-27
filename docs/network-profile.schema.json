@@ -3,14 +3,26 @@
   "title": "Asterisk Node Manager network profile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "key", "name", "config"],
+  "required": [
+    "schema_version", "key", "name", "registration_method",
+    "http_registration_server", "iax_registration_server", "iax_registration_port",
+    "stats_enabled", "stats_post_url", "stats_post_interval", "node_lookup_method",
+    "dns_node_domain", "max_dns_node_length", "external_node_file"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "key": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[a-zA-Z0-9._-]+$"},
     "name": {"type": "string", "minLength": 1, "maxLength": 200},
-    "config": {
-      "type": "object",
-      "description": "Opaque JSON object stored as supplied. Its properties are intentionally not defined yet."
-    }
+    "registration_method": {"type": "string", "enum": ["http", "iax", "none"]},
+    "http_registration_server": {"type": "string", "maxLength": 255},
+    "iax_registration_server": {"type": "string", "maxLength": 255},
+    "iax_registration_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "stats_enabled": {"type": "boolean"},
+    "stats_post_url": {"type": "string", "maxLength": 500, "anyOf": [{"const": ""}, {"format": "uri", "pattern": "^https?://"}]},
+    "stats_post_interval": {"type": "integer", "minimum": 30, "maximum": 600},
+    "node_lookup_method": {"type": "string", "enum": ["dns", "file", "both"]},
+    "dns_node_domain": {"type": "string", "maxLength": 255},
+    "max_dns_node_length": {"type": "integer", "minimum": 1, "maximum": 12},
+    "external_node_file": {"type": "string", "maxLength": 500}
   }
 }

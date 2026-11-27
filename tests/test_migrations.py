@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from alembic import command
@@ -8,8 +7,6 @@ from sqlalchemy import create_engine, inspect, text
 
 import asterisk_node_manager
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import Network, Node, SimpleUSBSettings
-from asterisk_node_manager.database import session_factory
 
 
 def _alembic_config(database):
@@ -20,64 +17,59 @@ def _alembic_config(database):
     return config
 
 
-def test_migration_graph_has_one_head():
+def test_migration_history_is_one_fresh_install_revision():
     config = _alembic_config("/tmp/unused-node-manager-test.sqlite3")
-    assert ScriptDirectory.from_config(config).get_heads() == ["0003_explicit_node_settings"]
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["0001_initial_schema"]
+    assert [revision.revision for revision in scripts.walk_revisions()] == ["0001_initial_schema"]
 
 
-def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path):
+def test_initial_migration_creates_current_schema_from_empty_database(tmp_path):
     database = tmp_path / "fresh.sqlite3"
-    upgrade_database(database)
+    command.upgrade(_alembic_config(database), "head")
     engine = create_engine(f"sqlite:///{database}")
     inspector = inspect(engine)
+
+    assert {"settings", "networks", "nodes", "simpleusb_settings", "usbradio_settings",
+            "config_values", "custom_values", "custom_lines", "module_directives",
+            "extension_rules", "changes", "generated_files"} <= set(
+                inspector.get_table_names())
+    config_value_columns = {column["name"] for column in inspector.get_columns("config_values")}
+    assert {"default_value", "updated_value"} <= config_value_columns
+    assert "is_default" in {column["name"] for column in inspector.get_columns("custom_lines")}
+    module_columns = {column["name"] for column in inspector.get_columns("module_directives")}
+    assert {"module", "action", "is_default", "is_custom", "updated_action"} <= module_columns
+    extension_columns = {column["name"] for column in inspector.get_columns("extension_rules")}
+    assert {"context", "directive", "extension", "priority", "application", "arguments",
+            "is_default", "is_custom", "updated_application", "updated_arguments"} <= extension_columns
     node_columns = {column["name"] for column in inspector.get_columns("nodes")}
     assert {"rxchannel", "duplex", "linktolink", "hangtime", "callerid"} <= node_columns
     assert "settings" not in node_columns
-    assert {column["name"] for column in inspector.get_columns("simpleusb_settings")} >= {
-        "rxboost", "carrierfrom", "rxmixerset", "txmixaset", "txmixbset"
-    }
+    network_columns = {column["name"] for column in inspector.get_columns("networks")}
+    assert {"registration_method", "http_registration_server", "iax_registration_server",
+            "stats_enabled", "stats_post_url", "node_lookup_method", "dns_node_domain"} <= network_columns
+    assert "config" not in network_columns
+
     with engine.connect() as connection:
         assert connection.execute(text("SELECT stable_key FROM networks")).scalars().all() == ["allstarlink"]
+        allstar = connection.execute(text(
+            "SELECT registration_method, http_registration_server, stats_post_url, "
+            "node_lookup_method, dns_node_domain FROM networks WHERE stable_key='allstarlink'"
+        )).one()
+        assert allstar == ("http", "register.allstarlink.org",
+                           "http://stats.allstarlink.org/uhandler", "dns", "nodes.allstarlink.org")
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0001_initial_schema"
     engine.dispose()
 
 
-def test_migration_moves_legacy_settings_into_typed_columns(tmp_path):
-    database = tmp_path / "legacy.sqlite3"
-    config = _alembic_config(database)
-    command.upgrade(config, "0002_change_details")
-    engine = create_engine(f"sqlite:///{database}")
-    with engine.begin() as connection:
-        connection.execute(text("INSERT INTO nodes (node_number, name, network_id, enabled, settings) "
-                                "VALUES (1234, 'Imported node', NULL, 1, :settings)"),
-                           {"settings": json.dumps({"rxchannel": "SimpleUSB/1234", "duplex": "0",
-                                                    "hangtime": "2345", "linktolink": "yes",
-                                                    "oldcustom": "legacy", "custompassword": "keep-me"})})
-        connection.execute(text("INSERT INTO config_values (file_name, section, key, value, secret) "
-                                "VALUES ('simpleusb.conf', '1234', 'rxmixerset', '612', 0)"))
-        connection.execute(text("INSERT INTO config_values (file_name, section, key, value, secret) "
-                                "VALUES ('rpt.conf', '1234', 'oldcustom', 'existing', 0)"))
-    engine.dispose()
-
+def test_fresh_database_seeds_declared_configuration_defaults(tmp_path):
+    database = tmp_path / "seeded.sqlite3"
     upgrade_database(database)
-    sessions = session_factory(database)
-    try:
-        with sessions() as session:
-            node = session.query(Node).filter_by(node_number=1234).one()
-            assert node.rxchannel == "SimpleUSB/1234"
-            assert node.duplex == 0
-            assert node.hangtime == 2345
-            assert node.linktolink is True
-            assert node.simpleusb_settings.rxmixerset == 612
-            assert session.query(Network).count() == 1
-            assert session.query(SimpleUSBSettings).count() == 1
-            retained = session.execute(text(
-                "SELECT value FROM config_values WHERE file_name='rpt.conf' AND key='oldcustom'"
-            )).scalar_one()
-            assert retained == "existing"
-            secret, secret_flag = session.execute(text(
-                "SELECT value, secret FROM config_values WHERE file_name='rpt.conf' AND key='custompassword'"
-            )).one()
-            assert secret == "keep-me"
-            assert secret_flag is True or secret_flag == 1
-    finally:
-        sessions.kw["bind"].dispose()
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM config_values")).scalar_one() > 0
+        assert connection.execute(text("SELECT count(*) FROM custom_lines WHERE is_default=1")).scalar_one() > 0
+        assert connection.execute(text("SELECT count(*) FROM module_directives WHERE is_default=1")).scalar_one() > 0
+        assert connection.execute(text("SELECT count(*) FROM extension_rules WHERE is_default=1")).scalar_one() > 0
+        assert connection.execute(text("SELECT stable_key FROM networks")).scalars().all() == ["allstarlink"]
+    engine.dispose()

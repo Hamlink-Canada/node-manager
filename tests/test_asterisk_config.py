@@ -3,6 +3,7 @@ from asterisk_node_manager.asterisk_config import (
     is_secret_key,
     parse_config,
 )
+from asterisk_node_manager.structured_config import parse_extension_rule, parse_module_directive
 
 
 def test_parse_config_keeps_sections_comments_and_unparsed_lines():
@@ -58,3 +59,42 @@ def test_literal_hash_in_value_is_not_an_inline_comment():
     values, preserved = parse_config("iax.conf", '[test]\ncallerid = "Repeater #1"\n')
     assert values == {"test": {"callerid": '"Repeater #1"'}}
     assert preserved["test"] == []
+
+
+def test_hash_prefixed_asterisk_include_directives_are_recognized():
+    from asterisk_node_manager.asterisk_config import is_asterisk_include
+
+    assert is_asterisk_include('#include "extra.conf"')
+    assert is_asterisk_include('  #tryinclude "optional.conf"')
+    assert not is_asterisk_include("# a comment")
+
+
+def test_module_load_directives_are_preserved_as_repeated_lines():
+    values, lines = parse_config(
+        "modules.conf",
+        "[modules]\nload = app_rpt.so\nload = chan_simpleusb.so\nnoload = chan_usbradio.so\n",
+    )
+    assert values == {"modules": {}}
+    assert lines["modules"] == ["load = app_rpt.so", "load = chan_simpleusb.so",
+                                 "noload = chan_usbradio.so"]
+
+
+def test_allow_and_disallow_codec_directives_keep_their_source_order():
+    values, lines = parse_config(
+        "iax.conf",
+        "[general]\nallow = all\ndisallow = all\nallow = ulaw\n",
+    )
+    assert values == {"general": {}}
+    assert lines["general"] == [
+        "allow = all", "disallow = all", "allow = ulaw",
+    ]
+
+
+def test_structured_directives_ignore_indentation_and_keep_nested_arguments():
+    assert parse_module_directive("  require => app_rpt.so ; built in") == ("require", "app_rpt.so")
+    assert parse_extension_rule(
+        "\tsame => n,NoOp(Connect from ${CALLERID(num)} to ${EXTEN}, channel ${CHANNEL(channeltype)})"
+    ) == {
+        "directive": "same", "extension": None, "priority": "n", "application": "NoOp",
+        "arguments": "Connect from ${CALLERID(num)} to ${EXTEN}, channel ${CHANNEL(channeltype)}",
+    }

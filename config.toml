@@ -3,6 +3,7 @@ database = "/var/lib/asterisk-node-manager/manager.sqlite3"
 asterisk_directory = "/etc/asterisk"
 writer_socket = "/run/asterisk-node-manager/writer.sock"
 writer_allowlist = "/etc/asterisk-node-manager/writers"
+network_profiles_directory = "/etc/asterisk-node-manager/networks"
 asterisk_cli = "/usr/sbin/asterisk"
 
 [web]
@@ -11,3 +12,7 @@ port = 8765
 pam_service = "asterisk-node-manager"
 secret_key_file = "/etc/asterisk-node-manager/secret-key"
 demo_mode = false
+
+[networks]
+profiles_enabled = false
+default_network = "allstarlink"

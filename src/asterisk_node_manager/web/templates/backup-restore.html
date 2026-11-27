@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}Backup &amp; Restore · Asterisk Node Manager{% endblock %}
+{% block content %}
+<div class="mb-4"><p class="text-uppercase text-primary fw-semibold small mb-1">Database</p><h1 class="h2 mb-1">Backup &amp; Restore</h1><p class="text-body-secondary">Download a copy of the SQLite database or restore a saved copy.</p></div>
+<div class="row g-4"><div class="col-lg-6"><section class="card shadow-sm"><div class="card-body"><h2 class="h5">Create a backup</h2><p class="text-body-secondary">Download a transactionally consistent copy of the current database.</p><a class="btn btn-primary" href="{{ url_for('backup') }}">Download backup</a></div></section></div>
+<div class="col-lg-6"><section class="card shadow-sm border-warning-subtle"><div class="card-body"><h2 class="h5">Restore a backup</h2><p class="text-body-secondary">Restoring replaces the current database and regenerates configuration files.</p><form method="post" enctype="multipart/form-data" action="{{ url_for('restore') }}" onsubmit="return confirm('Restore this database and regenerate configuration?')"><label class="form-label" for="database-file">SQLite backup</label><input class="form-control" id="database-file" type="file" name="database" accept=".sqlite,.sqlite3,.db" required><button class="btn btn-outline-danger mt-3" type="submit">Restore database</button></form></div></section></div></div>
+{% endblock %}

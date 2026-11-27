@@ -1,0 +1,13 @@
+[general]
+;bindaddr = 10.10.10.1          ; specify a particular IP address to bind to (not generally used, defaults to bind to all interfaces)
+port = 1667                     ; specifies the UDP port to use for incoming connections
+buflen = 480                    ; specifies the receive buffer length in milliseconds.
+                                ; This parameter should be set to the maximum expected network latency,
+                                ; plus a little padding (100 milliseconds of padding is a good amount).
+                                ; The default is 480 milliseconds, the minimum is 320 milliseconds.
+                                ; Buffer length may be specified on a global or per-instance basis, see below.
+
+utos = y                        ; Turn on IP TOS for Ubiquiti (ToS is enable by default on the RTCM/VOTER) from the host TO the clients
+
+;sanity = 0                     ; disable sanity checking of clients (debug use only) defaults to 1 if not specifically set to 0
+;puckit = 1                     ; KLUDGE to try and fix random Garmin LVC-18 pucks that may or may not be 1 second off (defaults to 0 if not specified or set to 1)
