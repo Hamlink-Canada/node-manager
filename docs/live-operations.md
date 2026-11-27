@@ -25,8 +25,8 @@ requests return `503` with `Retry-After: 2`. Task records expire after one hour
 or when evicted from the 500-record LRU; they are lost on service restart.
 `reload_driver` reloads only the selected channel-driver module. The result
 warns that unsaved live values can be replaced by saved configuration. Demo
-mode resets simulated live values to the saved defaults when this operation is
-requested.
+mode resets simulated live values to the initial demonstration baseline when
+this operation is requested.
 
 The fixed tuning allowlist is:
 

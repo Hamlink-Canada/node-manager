@@ -133,8 +133,8 @@ class LiveTaskQueue:
                             )
                     elif task.operation == "reload_driver":
                         record["warning"] = (
-                            "Reloading the driver reapplies saved configuration and can discard "
-                            "unsaved live tuning changes."
+                            "Reloading the driver reapplies saved configuration (or the demo "
+                            "baseline) and can discard unsaved live tuning changes."
                         )
                     self._trim()
                 self._audit("succeeded", record)

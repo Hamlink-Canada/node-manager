@@ -98,7 +98,7 @@ def test_transmitting_usbradio_settings_require_explicit_confirmation():
         raise AssertionError("a transmit-capable tuning request was not gated")
 
 
-def test_demo_driver_reload_restores_only_that_drivers_saved_mock_values():
+def test_demo_driver_reload_restores_only_that_drivers_initial_mock_values():
     tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
     radio_tune = TaskRequest("a" * 32, "demo", "usbradio", "set_value", 1002,
                              "1002", "rxsquelch", 512)
