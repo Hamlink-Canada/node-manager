@@ -6,7 +6,7 @@
 {% endfor %}{% for line in custom_lines if line.section == section %}{{ line.content }}
 {% endfor %}{% endfor %}
 {% for node in nodes %}
-[{{ node.node_number }}]
+[{{ node.node_number }}](node-main)
 node = {{ node.node_number }}
 {% for key, value in node.settings.items() %}{{ key }} = {{ value }}
 {% endfor %}{% for line in node.custom_lines %}{{ line }}

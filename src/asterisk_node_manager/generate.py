@@ -86,6 +86,20 @@ def _network_registration(line: str, profiles: dict[int, dict]) -> tuple[str, st
     return None
 
 
+def _base_configuration(filename: str):
+    """Load the packaged baseline as configuration data for one generated file."""
+    from .asterisk_config import parse_config
+
+    path = Path(__file__).parent / "conf" / "base" / filename
+    if not path.is_file():
+        return {}, {}
+    return parse_config(filename, path.read_text(encoding="utf-8"))
+
+
+def _node_section(section: str) -> bool:
+    return re.fullmatch(r"\d+(?:\([^()]*\))?", section) is not None
+
+
 def render_database(database: str | Path, *, network_profiles_enabled: bool = False,
                     default_network: str = "allstarlink") -> dict[str, bytes]:
     templates = Environment(loader=PackageLoader("asterisk_node_manager", "conf"),
@@ -142,16 +156,34 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                 typed = node.simpleusb_settings
                 for key in simpleusb_fields:
                     value = getattr(typed, key)
-                    usb_values.append(SimpleNamespace(section=str(node.node_number), key=key,
+                    usb_values.append(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key,
                                                       value=("yes" if value else "no") if isinstance(value, bool)
                                                       else str(value), secret=False))
             if node.rxchannel.startswith("Radio/") and node.usbradio_settings:
-                radio_values.extend(SimpleNamespace(section=str(node.node_number), key=key, value=value,
+                radio_values.extend(SimpleNamespace(section=f"{node.node_number}(node-main)", key=key, value=value,
                                                      secret=False)
                                     for key, value in usbradio_config_values(node.usbradio_settings).items())
         for filename in GENERATED_FILES:
-            values = [value for value in file_values if value.file_name == filename]
-            custom = [line for line in custom_lines if line.file_name == filename]
+            base_values, base_custom = _base_configuration(filename)
+            base_sections = list(dict.fromkeys((*base_values, *base_custom)))
+            merged_values = {section: dict(entries) for section, entries in base_values.items()}
+            for value in file_values:
+                if value.file_name == filename:
+                    merged_values.setdefault(value.section, {})[value.key] = value
+            values = [SimpleNamespace(file_name=filename, section=section, key=key,
+                                      value=value.value if hasattr(value, "value") else value,
+                                      secret=getattr(value, "secret", False))
+                      for section, entries in merged_values.items()
+                      for key, value in entries.items()]
+            custom = [SimpleNamespace(section=section, line_number=index, content=content)
+                      for section, lines in base_custom.items()
+                      for index, content in enumerate(lines)]
+            custom.extend(line for line in custom_lines if line.file_name == filename)
+            if filename in {"simpleusb.conf", "usbradio.conf"}:
+                values = [SimpleNamespace(**{**vars(value), "section": f"{value.section}(node-main)"})
+                          if value.section.isdigit() else value for value in values]
+                custom = [SimpleNamespace(**{**vars(line), "section": f"{line.section}(node-main)"})
+                          if line.section.isdigit() else line for line in custom]
             if filename in {"iax.conf", "rpt_http_registrations.conf"}:
                 routed = []
                 for line in custom_lines:
@@ -177,24 +209,43 @@ def render_database(database: str | Path, *, network_profiles_enabled: bool = Fa
                     custom_lines=[line for line in custom if not line.section.isdigit()],
                     global_custom_lines=[line for line in custom if not line.section],
                     sections=order_sections([
-                        *(line.section for line in custom if line.section and not line.section.isdigit()),
-                        *(value.section for value in values if value.section and not value.section.isdigit()),
+                        *base_sections,
+                        *(line.section for line in custom if line.section and not _node_section(line.section)),
+                        *(value.section for value in values if value.section and not _node_section(value.section)),
                     ]),
                     section_header=section_header)
             else:
                 if filename == "simpleusb.conf":
                     values = [value for value in values
-                              if not (value.section.isdigit() and value.key in simpleusb_fields)]
+                              if not (_node_section(value.section) and value.key in simpleusb_fields)]
                     values.extend(usb_values)
                     values.sort(key=lambda value: (value.section, value.key))
                 elif filename == "usbradio.conf":
                     values = [value for value in values
-                              if not (value.section.isdigit() and value.key in usbradio_fields)]
+                              if not (_node_section(value.section) and value.key in usbradio_fields)]
                     values.extend(radio_values)
                     values.sort(key=lambda value: (value.section, value.key))
+                elif filename == "modules.conf":
+                    active_drivers = {
+                        "chan_simpleusb.so": any(node.rxchannel.startswith("SimpleUSB/") for node in nodes),
+                        "chan_usbradio.so": any(node.rxchannel.startswith("Radio/") for node in nodes),
+                        "chan_voter.so": any(node.rxchannel.startswith("Voter/") for node in nodes),
+                    }
+                    rewritten = []
+                    for line in custom:
+                        match = re.match(r"^(\s*)(load|noload)(\s*(?:=>|=)\s*)([^\s;]+)(.*)$",
+                                         line.content, re.IGNORECASE)
+                        if match and match.group(4) in active_drivers:
+                            indent, _, separator, module, suffix = match.groups()
+                            directive = "load" if active_drivers[module] else "noload"
+                            line = SimpleNamespace(section=line.section, line_number=line.line_number,
+                                                   content=f"{indent}{directive}{separator}{module}{suffix}")
+                        rewritten.append(line)
+                    custom = rewritten
                 content = templates.get_template("generic.conf.j2").render(
                     filename=filename, values=values, custom_lines=custom,
                     sections=order_sections([
+                        *base_sections,
                         *(line.section for line in custom),
                         *(value.section for value in values),
                     ]),

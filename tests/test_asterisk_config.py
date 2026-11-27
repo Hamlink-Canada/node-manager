@@ -58,3 +58,13 @@ def test_literal_hash_in_value_is_not_an_inline_comment():
     values, preserved = parse_config("iax.conf", '[test]\ncallerid = "Repeater #1"\n')
     assert values == {"test": {"callerid": '"Repeater #1"'}}
     assert preserved["test"] == []
+
+
+def test_module_load_directives_are_preserved_as_repeated_lines():
+    values, lines = parse_config(
+        "modules.conf",
+        "[modules]\nload = app_rpt.so\nload = chan_simpleusb.so\nnoload = chan_usbradio.so\n",
+    )
+    assert values == {"modules": {}}
+    assert lines["modules"] == ["load = app_rpt.so", "load = chan_simpleusb.so",
+                                 "noload = chan_usbradio.so"]

@@ -33,7 +33,9 @@ def parse_config(filename: str, text: str) -> tuple[dict[str, dict[str, str]], d
             if match:
                 key, value = match.groups()
                 value, comment = _split_inline_comment(value)
-                if key.strip().lower() in {"exten", "same", "register"}:
+                if key.strip().lower() in {
+                    "allow", "exten", "load", "noload", "register", "require", "same",
+                }:
                     preserved.setdefault(section, []).append(line)
                 else:
                     values.setdefault(section, {})[key.strip()] = value

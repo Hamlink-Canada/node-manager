@@ -5,8 +5,11 @@ repository provides a shared library, the astnode command, and a Flask web
 manager. SQLAlchemy models and Alembic migrations manage the SQLite store;
 bundled Jinja2 templates generate files consumed by Asterisk and apt-rpt.
 
-The project targets Python 3.11+ and Debian 12 and 13. It is licensed under
-GPL-3.0-or-later. See GLOSSARY.md for project terminology.
+The project targets Python 3.11+ and Debian 12 and 13. The application code is
+licensed under GPL-3.0-or-later. The bundled Asterisk configuration baselines
+are derived from AllStarLink/app_rpt and are licensed under GPL-2.0-only; see
+`src/asterisk_node_manager/conf/base/README.md`. See GLOSSARY.md for project
+terminology.
 
 ## Development installation
 
@@ -33,6 +36,11 @@ The web service binds to 127.0.0.1:8765 by default. Web access uses the host
 PAM service. PAM users can read configuration; write access is controlled by
 the root-managed writer allowlist. Manage that allowlist with the root-only
 commands astnode writers add USERNAME and astnode writers remove USERNAME.
+The application packages full base configurations for every managed Asterisk
+file. Database settings override matching baseline values, then the writer
+replaces the managed files with the rendered configuration. It does not rely
+on the host's `custom/` include directory. This includes `echolink.conf`.
+
 Network profiles use schema version 2 with explicit registration method and
 servers, status reporting URL and interval, node lookup method, DNS domain,
 maximum DNS node ID length, and external node file fields. These values are

@@ -25,7 +25,11 @@ models. Flask templates and static assets live under the package's `web/`
 directory; Asterisk configuration templates live under `conf/`.
 Configuration-file edits and network profile uploads are validated and
 previewed before commit. A committed change is rendered into a fixed allowlist
-of Asterisk configuration filenames.
+of Asterisk configuration filenames. Each file starts from its packaged base
+configuration; database values replace matching defaults and typed node and
+network values replace their corresponding base values. The generated output
+contains the complete configuration and does not depend on Asterisk's
+`custom/` include directory. This includes `echolink.conf`.
 
 The web service runs as the asterisk-node-manager system user. It cannot
 write Asterisk configuration files. It connects to the root-owned,

@@ -1,6 +1,6 @@
 from asterisk_node_manager.asterisk_config import parse_config
 from asterisk_node_manager.database import session_factory
-from asterisk_node_manager.generate import render_database
+from asterisk_node_manager.generate import GENERATED_FILES, render_database
 from asterisk_node_manager.models import (
     ConfigValue,
     CustomLine,
@@ -143,8 +143,76 @@ def test_disabled_profile_status_removes_imported_status_values(database):
     finally:
         sessions.kw["bind"].dispose()
 
-    assert "statpost_url" not in rendered
-    assert "statpost_time" not in rendered
+    assert "\nstatpost_url =" not in rendered
+    assert "\nstatpost_time =" not in rendered
+
+
+def test_generation_includes_complete_base_files_and_echolink(database):
+    files = render_database(database)
+    expected_sections = {
+        "rpt.conf": ("[general]", "[functions]", "[telemetry]", "[controlstates]"),
+        "iax.conf": ("[general]", "[radio]", "[iaxrpt]"),
+        "extensions.conf": ("[globals]", "[radio]", "[radio-secure]"),
+        "modules.conf": ("[modules]",),
+        "manager.conf": ("[general]",),
+        "echolink.conf": ("[el0]",),
+        "simpleusb.conf": ("[node-main](!)",),
+        "usbradio.conf": ("[node-main](!)",),
+        "voter.conf": ("[general]",),
+        "rpt_http_registrations.conf": ("[general]", "[registrations]"),
+    }
+    assert set(files) == set(GENERATED_FILES)
+    for filename, sections in expected_sections.items():
+        rendered = files[filename].decode()
+        assert rendered.strip()
+        assert all(section in rendered for section in sections), filename
+        assert '#tryinclude "custom/' not in rendered, filename
+    assert "call =" in files["echolink.conf"].decode()
+    assert "PASSWORD=12345" not in files["savenode.conf"].decode()
+    assert "secret_password" not in files["voter.conf"].decode()
+    assert "abcdef@register.allstarlink.org" not in files["rpt_http_registrations.conf"].decode()
+    generated_text = "\n".join(data.decode() for data in files.values())
+    assert "api.allstarlink.org" not in generated_text
+    assert "register.allstarlink.org" not in generated_text
+    assert "nodes.allstarlink.org" not in generated_text
+    assert "stats.allstarlink.org" not in generated_text
+
+
+def test_database_config_values_override_packaged_baseline(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add(ConfigValue(file_name="iax.conf", section="general", key="bindport",
+                                    value="4570", secret=False))
+            session.add(ConfigValue(file_name="echolink.conf", section="el0", key="call",
+                                    value="N0CALL-L", secret=False))
+        files = render_database(database)
+    finally:
+        sessions.kw["bind"].dispose()
+
+    iax = files["iax.conf"].decode()
+    assert "bindport = 4570" in iax
+    assert "bindport = 4569" not in iax
+    assert "call = N0CALL-L" in files["echolink.conf"].decode()
+
+
+def test_channel_driver_modules_follow_node_interfaces(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add_all([
+                Node(node_number=4321, name="SimpleUSB node", rxchannel="SimpleUSB/4321",
+                     simpleusb_settings=SimpleUSBSettings()),
+                Node(node_number=4322, name="Radio node", rxchannel="Radio/4322",
+                     usbradio_settings=USBRadioSettings()),
+            ])
+        modules = render_database(database)["modules.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "load    = chan_simpleusb.so" in modules
+    assert "load  = chan_usbradio.so" in modules
+    assert "noload  = chan_voter.so" in modules
 
 
 def test_inheritance_suffixes_survive_import_and_render(database):
