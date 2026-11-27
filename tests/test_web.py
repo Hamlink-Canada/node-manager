@@ -615,6 +615,39 @@ def test_rpt_editor_uses_submitted_node_defaults_for_overrides(tmp_path):
         _dispose(sessions, settings.database)
 
 
+def test_rpt_editor_does_not_normalize_against_removed_custom_defaults(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        primary = session.query(ConfigValue).filter_by(
+            file_name="rpt.conf", section="node-main", key="hangtime").one()
+        primary.value = "5000"
+        session.add(CustomValue(file_name="rpt.conf", section="node-main", key="hangtime",
+                                value="6000", secret=False))
+    content = "[1000]\nhangtime=6000\n"
+
+    preview = client.post("/files/rpt.conf", data={"action": "preview", "content": content})
+    assert preview.status_code == 200
+    committed = client.post("/files/rpt.conf", data={
+        "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+    })
+    assert committed.status_code == 302
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1000).one()
+            assert node.hangtime == 6000
+        generated = (settings.demo_output_directory / "rpt.conf").read_text()
+        assert "hangtime = 6000" in generated
+    finally:
+        _dispose(sessions, settings.database)
+
+
 def test_editor_rejects_text_that_differs_from_preview(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")

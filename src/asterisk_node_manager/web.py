@@ -964,7 +964,9 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                     db.scalars(select(ConfigValue).where(ConfigValue.file_name == filename))}
     prior_values.update({(row.section, row.key): row for row in
                          db.scalars(select(CustomValue).where(CustomValue.file_name == filename))})
-    submitted_defaults = _stored_defaults(db, filename)
+    submitted_defaults = {row.key: row.value for row in db.scalars(select(ConfigValue).where(
+        ConfigValue.file_name == filename,
+        ConfigValue.section.in_(("node-main", "node-main(!)")))).all()}
     submitted_defaults.update({key: value for section, entries in values.items()
                                if section in {"node-main", "node-main(!)"}
                                for key, value in entries.items()})
