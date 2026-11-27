@@ -23,6 +23,21 @@ def test_configuration_hides_simpleusb_fields_when_another_channel_is_selected()
                    for group in groups for field in group["fields"])
 
 
+def test_configuration_exposes_radio_fields_and_can_build_both_switchable_panels():
+    radio_groups = node_field_groups(1234, {"rxchannel": "Radio/1234"})
+    radio_fields = {field["form_key"] for group in radio_groups for field in group["fields"]}
+    assert "usbradio_rxdemod" in radio_fields
+    assert "usbradio_rxvoiceadj" in radio_fields
+    assert not any(field["form_key"].startswith("simpleusb_")
+                   for group in radio_groups for field in group["fields"])
+
+    all_groups = node_field_groups(1234, {"rxchannel": "SimpleUSB/1234"}, include_other_interfaces=True)
+    panels = {group["interface"]: group["active"] for group in all_groups if group["interface"]}
+    assert panels == {"SimpleUSB": True, "Radio": False}
+    fields = {field["form_key"] for group in all_groups for field in group["fields"]}
+    assert {"simpleusb_rxmixerset", "usbradio_rxmixerset"} <= fields
+
+
 def test_validation_rejects_invalid_numeric_values_and_normalizes_valid_values():
     values, errors = validate_node_settings({"duplex": "9", "hangtime": "-1"}, 1234)
     assert values is None
@@ -32,6 +47,10 @@ def test_validation_rejects_invalid_numeric_values_and_normalizes_valid_values()
     assert errors == {}
     assert values["duplex"] == "0"
     assert values["hangtime"] == "2500"
+
+    values, errors = validate_node_settings({"usbradio_rxvoiceadj": "0.625"}, 1234)
+    assert errors == {}
+    assert values["usbradio_rxvoiceadj"] == "0.625"
 
 
 def test_typed_node_mapping_round_trips_booleans_and_numbers():

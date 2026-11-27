@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, inspect, text
 
 import asterisk_node_manager
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import Network, Node, SimpleUSBSettings
+from asterisk_node_manager.models import Network, Node, SimpleUSBSettings, USBRadioSettings
 from asterisk_node_manager.database import session_factory
 
 
@@ -22,7 +22,7 @@ def _alembic_config(database):
 
 def test_migration_graph_has_one_head():
     config = _alembic_config("/tmp/unused-node-manager-test.sqlite3")
-    assert ScriptDirectory.from_config(config).get_heads() == ["0004_network_profile_controls"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0006_explicit_network_settings"]
 
 
 def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path):
@@ -36,8 +36,21 @@ def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path
     assert {column["name"] for column in inspector.get_columns("simpleusb_settings")} >= {
         "rxboost", "carrierfrom", "rxmixerset", "txmixaset", "txmixbset"
     }
+    assert {column["name"] for column in inspector.get_columns("usbradio_settings")} >= {
+        "rxboost", "carrierfrom", "rxdemod", "rxvoiceadj", "rxctcssfreqs", "txmixaset"
+    }
+    network_columns = {column["name"] for column in inspector.get_columns("networks")}
+    assert {"registration_method", "http_registration_server", "iax_registration_server",
+            "stats_enabled", "stats_post_url", "node_lookup_method", "dns_node_domain"} <= network_columns
+    assert "config" not in network_columns
     with engine.connect() as connection:
         assert connection.execute(text("SELECT stable_key FROM networks")).scalars().all() == ["allstarlink"]
+        allstar = connection.execute(text(
+            "SELECT registration_method, http_registration_server, stats_post_url, "
+            "node_lookup_method, dns_node_domain FROM networks WHERE stable_key='allstarlink'"
+        )).one()
+        assert allstar == ("http", "register.allstarlink.org",
+                           "http://stats.allstarlink.org/uhandler", "dns", "nodes.allstarlink.org")
         assert connection.execute(text(
             "SELECT value FROM settings WHERE key='network_profiles_enabled'")).scalar_one() == "false"
     engine.dispose()
@@ -70,6 +83,8 @@ def test_migration_moves_legacy_settings_into_typed_columns(tmp_path):
             assert node.hangtime == 2345
             assert node.linktolink is True
             assert node.simpleusb_settings.rxmixerset == 612
+            assert node.usbradio_settings is not None
+            assert session.query(USBRadioSettings).count() == 1
             assert session.query(Network).count() == 1
             assert session.query(SimpleUSBSettings).count() == 1
             retained = session.execute(text(
@@ -83,3 +98,37 @@ def test_migration_moves_legacy_settings_into_typed_columns(tmp_path):
             assert secret_flag is True or secret_flag == 1
     finally:
         sessions.kw["bind"].dispose()
+
+
+def test_network_migration_moves_recognized_profile_values_into_columns(tmp_path):
+    database = tmp_path / "network-fields.sqlite3"
+    config = _alembic_config(database)
+    command.upgrade(config, "0005_usbradio_settings")
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO networks (stable_key, name, schema_version, config) "
+            "VALUES ('example.net', 'Example Network', 1, :config)"),
+            {"config": json.dumps({
+                "registration_method": "iax", "iax_registration_server": "register.example.net",
+                "iax_registration_port": 4570, "stats_enabled": True,
+                "stats_post_url": "https://stats.example.net/update",
+                "node_lookup_method": "dns", "dns_node_domain": "nodes.example.net",
+                "max_dns_node_length": 8, "unrecognized": "discarded",
+            })})
+    engine.dispose()
+
+    upgrade_database(database)
+    engine = create_engine(f"sqlite:///{database}")
+    try:
+        with engine.connect() as connection:
+            values = connection.execute(text(
+                "SELECT schema_version, registration_method, iax_registration_server, "
+                "iax_registration_port, stats_enabled, stats_post_url, node_lookup_method, "
+                "dns_node_domain, max_dns_node_length FROM networks WHERE stable_key='example.net'"
+            )).one()
+            assert values == (2, "iax", "register.example.net", 4570, 1,
+                              "https://stats.example.net/update", "dns", "nodes.example.net", 8)
+            assert "config" not in {column["name"] for column in inspect(connection).get_columns("networks")}
+    finally:
+        engine.dispose()

@@ -11,9 +11,10 @@ from types import SimpleNamespace
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from sqlalchemy import select
 
-from .configuration import node_config_values, node_fields_for_file
+from .configuration import node_config_values, node_fields_for_file, usbradio_config_values
 from .database import session_factory
 from .models import ConfigValue, CustomLine, Network, Node, Setting
+from .networks import network_fields
 
 GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
                    "manager.conf", "echolink.conf", "usbradio.conf",
@@ -74,31 +75,49 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                              and settings.get("advanced_node_networks", "false").lower() == "true")
         nodes = list(session.scalars(select(Node).order_by(Node.node_number)))
         simpleusb_fields = node_fields_for_file("simpleusb.conf")
+        usbradio_fields = node_fields_for_file("usbradio.conf")
         file_values = list(session.scalars(select(ConfigValue).order_by(
             ConfigValue.file_name, ConfigValue.section, ConfigValue.key)))
         custom_lines = list(session.scalars(select(CustomLine).order_by(
             CustomLine.file_name, CustomLine.id)))
         nodes_context = []
         usb_values = []
+        radio_values = []
         for node in nodes:
             network = node.network if advanced_networks and node.network else default_network
             advanced = {value.key: value.value for value in file_values
                         if value.file_name == "rpt.conf" and value.section == str(node.node_number)
                         and value.key not in node_config_values(node)}
             rpt_settings = {**node_config_values(node), **advanced}
+            profile = network_fields(network) if network else {}
+            if profile:
+                rpt_settings["node_lookup_method"] = profile["node_lookup_method"]
+                if profile["dns_node_domain"]:
+                    rpt_settings["dns_node_domain"] = profile["dns_node_domain"]
+                if profile["node_lookup_method"] != "file":
+                    rpt_settings["max_dns_node_length"] = str(profile["max_dns_node_length"])
+                if profile["node_lookup_method"] in {"file", "both"} and profile["external_node_file"]:
+                    rpt_settings["extnodefile"] = profile["external_node_file"]
+                if profile["stats_enabled"] and profile["stats_post_url"]:
+                    rpt_settings["statpost_url"] = profile["stats_post_url"]
+                    rpt_settings["statpost_time"] = str(profile["stats_post_interval"])
             nodes_context.append({
                 "node_number": node.node_number, "name": node.name,
                 "enabled": node.enabled,
                 "settings": rpt_settings,
                 "network_key": network.stable_key if network else None,
             })
-            if node.simpleusb_settings:
+            if node.rxchannel.startswith("SimpleUSB/") and node.simpleusb_settings:
                 typed = node.simpleusb_settings
                 for key in simpleusb_fields:
                     value = getattr(typed, key)
                     usb_values.append(SimpleNamespace(section=str(node.node_number), key=key,
                                                       value=("yes" if value else "no") if isinstance(value, bool)
                                                       else str(value), secret=False))
+            if node.rxchannel.startswith("Radio/") and node.usbradio_settings:
+                radio_values.extend(SimpleNamespace(section=str(node.node_number), key=key, value=value,
+                                                     secret=False)
+                                    for key, value in usbradio_config_values(node.usbradio_settings).items())
         for filename in GENERATED_FILES:
             values = [value for value in file_values if value.file_name == filename]
             custom = [line for line in custom_lines if line.file_name == filename]
@@ -122,6 +141,11 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                     values = [value for value in values
                               if not (value.section.isdigit() and value.key in simpleusb_fields)]
                     values.extend(usb_values)
+                    values.sort(key=lambda value: (value.section, value.key))
+                elif filename == "usbradio.conf":
+                    values = [value for value in values
+                              if not (value.section.isdigit() and value.key in usbradio_fields)]
+                    values.extend(radio_values)
                     values.sort(key=lambda value: (value.section, value.key))
                 content = templates.get_template("generic.conf.j2").render(
                     filename=filename, values=values, custom_lines=custom,

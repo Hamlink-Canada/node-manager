@@ -33,8 +33,11 @@ The web service binds to 127.0.0.1:8765 by default. Web access uses the host
 PAM service. PAM users can read configuration; write access is controlled by
 the root-managed writer allowlist. Manage that allowlist with the root-only
 commands astnode writers add USERNAME and astnode writers remove USERNAME.
-The network profile upload format is documented in
-docs/network-profile.schema.json.
+Network profiles use schema version 2 with explicit registration method and
+servers, status reporting URL and interval, node lookup method, DNS domain,
+maximum DNS node ID length, and external node file fields. These values are
+stored in separate SQLite columns; profiles do not accept an opaque config
+object. The upload format is documented in docs/network-profile.schema.json.
 Network profiles are disabled by default. Enable them from the web app's
 Settings page to show the profile manager. On startup, the web and writer
 services scan `paths.network_profiles_directory` (default

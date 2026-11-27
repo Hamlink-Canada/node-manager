@@ -11,13 +11,27 @@ from asterisk_node_manager.database import (
     sqlite_snapshot,
 )
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import ConfigValue, CustomLine, Network, Node, Setting
+from asterisk_node_manager.models import (ConfigValue, CustomLine, Network, Node, Setting,
+                                          USBRadioSettings)
 from asterisk_node_manager.web import create_app
 
 
 def _dispose(sessions, database):
     if not is_memory_database(database):
         sessions.kw["bind"].dispose()
+
+
+def _network_profile(key, name, **overrides):
+    profile = {
+        "schema_version": 2, "key": key, "name": name,
+        "registration_method": "http", "http_registration_server": "",
+        "iax_registration_server": "", "iax_registration_port": 4569,
+        "stats_enabled": False, "stats_post_url": "", "stats_post_interval": 60,
+        "node_lookup_method": "both", "dns_node_domain": "",
+        "max_dns_node_length": 6, "external_node_file": "",
+    }
+    profile.update(overrides)
+    return profile
 
 
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):
@@ -39,6 +53,9 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         response = client.get(f"/nodes/{node_id}/configuration")
         assert response.status_code == 200
         assert b"Advanced settings" in response.data
+        assert b'data-interface-panel="SimpleUSB"' in response.data
+        assert b'data-interface-panel="Radio" hidden' in response.data
+        assert b'name="usbradio_rxdemod"' in response.data
         saved = client.post(f"/nodes/{node_id}/configuration", data={
             "rxchannel": "SimpleUSB/1000", "duplex": "0", "hangtime": "5000",
             "linktolink": "yes", "advanced_view": "yes",
@@ -48,6 +65,19 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         assert "linktolink = yes" in generated_rpt
         assert "duplex = 0" in generated_rpt
         assert "rxboost = no" in (settings.demo_output_directory / "simpleusb.conf").read_text()
+        switched = client.post(f"/nodes/{node_id}/configuration", data={
+            "rxchannel": "Radio/1000", "duplex": "0", "hangtime": "5000",
+            "usbradio_rxdemod": "speaker", "usbradio_rxvoiceadj": "0.625",
+            "advanced_view": "yes",
+        })
+        assert switched.status_code == 302
+        with sessions() as session:
+            node = session.get(Node, node_id)
+            assert node.usbradio_settings.rxdemod == "speaker"
+            assert node.usbradio_settings.rxvoiceadj == "0.625"
+        generated_radio = (settings.demo_output_directory / "usbradio.conf").read_text()
+        assert "rxdemod = speaker" in generated_radio
+        assert "rxvoiceadj = 0.625" in generated_radio
     finally:
         _dispose(sessions, settings.database)
 
@@ -109,6 +139,22 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
         assert "idrecording = |iVE3ABC" in generated
         assert "rxchannel = SimpleUSB/2345" in generated
 
+        radio = client.post("/nodes/setup", data={
+            "node_number": "2347",
+            "name": "USB Radio Repeater",
+            "callsign": "VE3XYZ",
+            "profile": "full_duplex_repeater",
+            "interface": "Radio",
+        })
+        assert radio.status_code == 302
+        with sessions() as session:
+            radio_node = session.query(Node).filter_by(node_number=2347).one()
+            assert radio_node.usbradio_settings is not None
+            assert session.query(USBRadioSettings).count() == 1
+        generated_radio = (settings.demo_output_directory / "usbradio.conf").read_text()
+        assert "[2347]" in generated_radio
+        assert "rxdemod = flat" in generated_radio
+
         hub = client.post("/nodes/setup", data={
             "node_number": "2346",
             "name": "Remote Hub",
@@ -161,8 +207,11 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     enabled = client.post("/settings", data={"network_profiles_enabled": "true"})
     assert enabled.status_code == 302
 
-    profile = {"schema_version": 1.0, "key": "example.net", "name": "Example network",
-               "config": {"register": True, "server": "example.invalid"}}
+    profile = _network_profile("example.net", "Example network",
+                               registration_method="iax", iax_registration_server="example.invalid",
+                               iax_registration_port=4570, stats_enabled=True,
+                               stats_post_url="https://stats.example.net/update",
+                               node_lookup_method="dns", dns_node_domain="nodes.example.net")
     preview = client.post("/networks/import", data={
         "network": (BytesIO(json.dumps(profile).encode()), "example.json")
     }, content_type="multipart/form-data")
@@ -170,8 +219,9 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     assert b"Example network" in preview.data
 
     committed = client.post("/networks/import", data={
-        "action": "commit", "schema_version": "1", "key": "example.net",
-        "name": "Example network", "config": json.dumps(profile["config"]),
+        "action": "commit", "schema_version": "2", **{
+            key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+            for key, value in profile.items()},
     })
     assert committed.status_code == 302
     sessions = session_factory(settings.database)
@@ -181,16 +231,75 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
             original_id = original.id
 
         replacement = client.post("/networks/import", data={
-            "action": "commit", "schema_version": "1", "key": "example.net",
-            "name": "Updated network", "config": json.dumps({"register": False}),
+            "action": "commit", **{
+                key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+                for key, value in _network_profile("example.net", "Updated network",
+                    registration_method="http", http_registration_server="updated.invalid").items()},
         })
         assert replacement.status_code == 302
         with sessions() as session:
             network = session.query(Network).filter_by(stable_key="example.net").one()
             assert network.id == original_id
             assert network.name == "Updated network"
-            assert network.config == {"register": False}
+            assert network.http_registration_server == "updated.invalid"
+            assert network.registration_method == "http"
             assert session.query(Network).filter_by(stable_key="allstarlink").count() == 1
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_network_add_and_import_are_separate_pages(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 302
+
+    overview = client.get("/networks")
+    assert b"href=\"/networks/add\"" in overview.data
+    assert b"href=\"/networks/import\"" in overview.data
+    assert b'name="config"' not in overview.data
+    assert client.get("/networks/add").status_code == 200
+    assert client.get("/networks/import").status_code == 200
+
+
+def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    client.post("/settings", data={"network_profiles_enabled": "true"})
+    profile = _network_profile("manual.example", "Manual Network",
+                               registration_method="iax", iax_registration_server="iax.example.net",
+                               iax_registration_port=4568, stats_enabled=True,
+                               stats_post_url="https://stats.example.net/update",
+                               node_lookup_method="both", dns_node_domain="nodes.example.net",
+                               max_dns_node_length=7,
+                               external_node_file="/var/lib/asterisk/nodes")
+    form = {key: ("true" if value else "false") if isinstance(value, bool) else str(value)
+            for key, value in profile.items()}
+    preview = client.post("/networks/manual", data=form)
+    assert preview.status_code == 200
+    assert b"IAX registration server" in preview.data
+    assert b"nodes.example.net" in preview.data
+
+    saved = client.post("/networks/manual", data={**form, "action": "commit"})
+    assert saved.status_code == 302
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            network = session.query(Network).filter_by(stable_key="manual.example").one()
+            assert network.registration_method == "iax"
+            assert network.iax_registration_port == 4568
+            assert network.stats_enabled is True
+            assert network.stats_post_url == "https://stats.example.net/update"
+            assert network.node_lookup_method == "both"
+            assert network.max_dns_node_length == 7
+            assert network.external_node_file == "/var/lib/asterisk/nodes"
     finally:
         _dispose(sessions, settings.database)
 
@@ -307,6 +416,36 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
             assert node.simpleusb_settings.rxmixerset == 600
             custom = session.query(ConfigValue).filter_by(
                 file_name="simpleusb.conf", section="1000", key="customdriveroption").one()
+            assert custom.value == "kept"
+    finally:
+        _dispose(sessions, settings.database)
+
+
+def test_advanced_usbradio_file_editor_saves_typed_and_unknown_fields(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+    content = "[1000]\nrxdemod=speaker\nrxvoiceadj=0.625\ncustomdriveroption=kept\n"
+
+    preview = client.post("/files/usbradio.conf", data={"action": "preview", "content": content})
+    assert preview.status_code == 200
+    committed = client.post("/files/usbradio.conf", data={
+        "action": "commit", "confirmed": "yes", "content": content,
+        "preview_hash": hashlib.sha256(content.encode()).hexdigest(),
+    })
+    assert committed.status_code == 302
+
+    sessions = session_factory(settings.database)
+    try:
+        with sessions() as session:
+            node = session.query(Node).filter_by(node_number=1000).one()
+            assert node.usbradio_settings.rxdemod == "speaker"
+            assert node.usbradio_settings.rxvoiceadj == "0.625"
+            custom = session.query(ConfigValue).filter_by(
+                file_name="usbradio.conf", section="1000", key="customdriveroption").one()
             assert custom.value == "kept"
     finally:
         _dispose(sessions, settings.database)

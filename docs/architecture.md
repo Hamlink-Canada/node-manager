@@ -11,9 +11,12 @@ and per-node profile assignment are hidden and inactive until the database
 setting `network_profiles_enabled` is enabled. When profiles are disabled,
 `default_network_key` selects the network used for all nodes.
 
-Network profile config is stored and re-exported as an opaque JSON object.
-Its properties and how they map to Asterisk settings remain undefined until
-the profile format is specified.
+Network profiles store their registration method and server addresses, status
+reporting options, and node lookup settings in explicit SQL columns. Profile
+JSON uses schema version 2 and lists these fields directly; arbitrary config
+objects are not stored. Status reporting and node lookup values are emitted as
+per-node `rpt.conf` settings. Registration server fields describe the service
+endpoint; registration directives still require credentials for each node.
 
 The astnode CLI and Flask application use the same library and database
 models. Flask templates and static assets live under the package's `web/`

@@ -15,8 +15,9 @@ from .config import load_settings
 from .database import database_write_lock, session_factory, sqlite_snapshot
 from .asterisk_config import is_secret_key, parse_config
 from .migrate import upgrade_database, validate_database_backup
-from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings
-from .configuration import NODE_CONFIG_FIELDS, apply_node_config_values, node_fields_for_file
+from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings, USBRadioSettings
+from .configuration import (NODE_CONFIG_FIELDS, apply_interface_config_values,
+                            apply_node_config_values, node_fields_for_file)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -221,8 +222,24 @@ def _import_config(path: Path, commit: bool, settings) -> int:
                                     continue
                             setattr(node.simpleusb_settings, key, value)
                         continue
+            if item.name == "usbradio.conf":
+                known_radio = node_fields_for_file("usbradio.conf")
+                for section, entries in values.items():
+                    if section.isdigit():
+                        node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
+                        if node is None:
+                            node = Node(node_number=int(section), name=f"Node {section}")
+                            db.add(node)
+                        if node.usbradio_settings is None:
+                            node.usbradio_settings = USBRadioSettings()
+                        apply_interface_config_values(node.usbradio_settings, "usbradio.conf", {
+                            key: value for key, value in entries.items() if key in known_radio})
+                        for key, value in entries.items():
+                            if key not in known_radio:
+                                _set_config_value(db, item.name, section, key, value)
+                        continue
             for section, entries in values.items():
-                if item.name in {"rpt.conf", "simpleusb.conf"} and section.isdigit():
+                if item.name in {"rpt.conf", "simpleusb.conf", "usbradio.conf"} and section.isdigit():
                     continue
                 for key, value in entries.items():
                     _set_config_value(db, item.name, section, key, value)

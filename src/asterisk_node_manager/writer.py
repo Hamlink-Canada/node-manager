@@ -15,7 +15,7 @@ from pathlib import Path
 import pam
 
 from .config import load_settings
-from .database import database_exists
+from .database import database_exists, database_write_lock
 from .networks import load_network_profiles
 from .generate import render_database
 
@@ -127,8 +127,9 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = load_settings()
     if not settings.demo_mode and database_exists(settings.database):
-        loaded_profiles = load_network_profiles(
-            settings.network_profiles_directory, settings.database)
+        with database_write_lock(settings.database):
+            loaded_profiles = load_network_profiles(
+                settings.network_profiles_directory, settings.database)
         if loaded_profiles:
             logging.getLogger(__name__).info("Loaded %d network profile files from %s",
                                              loaded_profiles, settings.network_profiles_directory)

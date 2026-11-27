@@ -9,27 +9,27 @@
 <form method="post" action="{{ url_for('node_configuration', node_id=node_id) }}">
   <input type="hidden" name="advanced_view" value="yes">
   {% for group in groups %}
-  <section class="card shadow-sm mb-4">
+  <section class="card shadow-sm mb-4{% if group.interface and not group.active %} d-none{% endif %}" {% if group.interface %}data-interface-panel="{{ group.interface }}"{% if not group.active %} hidden{% endif %}{% endif %}>
     <div class="card-header bg-white py-3"><h2 class="h5 mb-0">{{ group.title }}</h2></div>
     <div class="card-body"><div class="row g-3">
       {% for field in group.fields %}
       <div class="col-md-6">
-        <label class="form-label" for="field-{{ field.key }}">
+        <label class="form-label" for="field-{{ field.form_key }}">
           {{ field.label }}
           <button class="btn btn-sm p-0 ms-1 text-primary help-tip" type="button" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ field.help }}" aria-label="{{ field.help }}">ⓘ</button>
         </label>
         {% if field.kind == 'choice' or field.kind == 'channel' %}
-        <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+        <select class="form-select{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" {% if not can_write %}disabled{% endif %}>
           {% for value, label in field.choices %}<option value="{{ value }}" {% if field.value == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
         {% elif field.kind == 'boolean' %}
-        <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+        <select class="form-select{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" {% if not can_write %}disabled{% endif %}>
           <option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option>
         </select>
         {% else %}
-        <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+        <input class="form-control{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" value="{{ field.value }}" type="{{ 'number' if field.kind in ('number', 'decimal') else 'text' }}" {% if field.kind in ('number', 'decimal') %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="{{ 'any' if field.kind == 'decimal' else '1' }}"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
         {% endif %}
-        {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
+        {% if errors.get(field.form_key) %}<div class="invalid-feedback d-block">{{ errors[field.form_key] }}</div>{% endif %}
       </div>
       {% endfor %}
     </div></div>
@@ -40,24 +40,24 @@
     <div class="card-body">
       <p class="text-body-secondary">{{ _('advanced_settings_intro') }}</p>
       {% for group in advanced_groups %}
-      <section class="border rounded p-3 mb-3">
+      <section class="border rounded p-3 mb-3{% if group.interface and not group.active %} d-none{% endif %}" {% if group.interface %}data-interface-panel="{{ group.interface }}"{% if not group.active %} hidden{% endif %}{% endif %}>
         <h2 class="h6 mb-3">{{ group.title }}</h2>
         <div class="row g-3">
           {% for field in group.fields %}
           <div class="col-md-6">
-            <label class="form-label" for="field-{{ field.key }}">{{ field.label }}
+            <label class="form-label" for="field-{{ field.form_key }}">{{ field.label }}
               <button class="btn btn-sm p-0 ms-1 text-primary help-tip" type="button" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ field.help }}" aria-label="{{ field.help }}">ⓘ</button>
             </label>
             {% if field.kind == 'choice' or field.kind == 'channel' %}
-            <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}>
+            <select class="form-select{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" {% if not can_write %}disabled{% endif %}>
               {% for value, label in field.choices %}<option value="{{ value }}" {% if field.value == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
             </select>
             {% elif field.kind == 'boolean' %}
-            <select class="form-select{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" {% if not can_write %}disabled{% endif %}><option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option></select>
+            <select class="form-select{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" {% if not can_write %}disabled{% endif %}><option value="yes" {% if field.value == 'yes' %}selected{% endif %}>Yes</option><option value="no" {% if field.value == 'no' %}selected{% endif %}>No</option></select>
             {% else %}
-            <input class="form-control{% if errors.get(field.key) %} is-invalid{% endif %}" id="field-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}" type="{{ 'number' if field.kind == 'number' else 'text' }}" {% if field.kind == 'number' %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="1"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
+            <input class="form-control{% if errors.get(field.form_key) %} is-invalid{% endif %}" id="field-{{ field.form_key }}" name="{{ field.form_key }}" value="{{ field.value }}" type="{{ 'number' if field.kind in ('number', 'decimal') else 'text' }}" {% if field.kind in ('number', 'decimal') %}min="{{ field.browser_min }}" max="{{ field.browser_max }}" step="{{ 'any' if field.kind == 'decimal' else '1' }}"{% else %}maxlength="{{ field.max }}"{% endif %} {% if not can_write %}readonly{% endif %}>
             {% endif %}
-            {% if errors.get(field.key) %}<div class="invalid-feedback d-block">{{ errors[field.key] }}</div>{% endif %}
+            {% if errors.get(field.form_key) %}<div class="invalid-feedback d-block">{{ errors[field.form_key] }}</div>{% endif %}
           </div>
           {% endfor %}
         </div>
@@ -71,4 +71,23 @@
     <span class="small text-body-secondary">{{ _('configuration_source_note') }} <a href="https://github.com/AllStarLink/app_rpt/blob/master/configs/rpt/rpt.conf" target="_blank" rel="noopener noreferrer">app_rpt rpt.conf examples</a>.</span>
   </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const channel = document.getElementById('field-rxchannel');
+  if (!channel) return;
+  const updatePanels = () => {
+    const selected = channel.value.split('/', 1)[0];
+    document.querySelectorAll('[data-interface-panel]').forEach((panel) => {
+      const inactive = panel.dataset.interfacePanel !== selected;
+      panel.hidden = inactive;
+      panel.classList.toggle('d-none', inactive);
+    });
+  };
+  channel.addEventListener('change', updatePanels);
+  updatePanels();
+})();
+</script>
 {% endblock %}

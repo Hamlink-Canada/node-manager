@@ -22,18 +22,21 @@ from sqlalchemy import func, select
 from waitress import serve
 
 from .config import Settings, load_settings
-from .database import (acquire_database_write_lock, database_exists, dispose_database_engine,
+from .database import (acquire_database_write_lock, database_exists, database_write_lock,
+                       dispose_database_engine,
                        is_memory_database, release_database_write_lock, restore_sqlite_snapshot,
                        session_factory, sqlite_snapshot)
 from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
-from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings
+from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings, USBRadioSettings
 from .migrate import upgrade_database
 from .demo import DEMO_USERNAME, initialize_demo
-from .networks import load_network_profiles, parse_network_profile
+from .networks import (NETWORK_DEFAULTS, NETWORK_FIELD_DEFINITIONS, load_network_profiles,
+                       network_fields, parse_network_profile)
 from . import __version__
 from .configuration import (
     NODE_CONFIG_FIELDS,
+    apply_interface_config_values,
     apply_node_config_values,
     available_locales,
     node_field_groups,
@@ -53,8 +56,9 @@ def create_app(settings: Settings | None = None) -> Flask:
             raise ValueError("Demo mode requires an in-memory database")
         initialize_demo(settings.database)
     if database_exists(settings.database):
-        loaded_profiles = load_network_profiles(
-            settings.network_profiles_directory, settings.database)
+        with database_write_lock(settings.database):
+            loaded_profiles = load_network_profiles(
+                settings.network_profiles_directory, settings.database)
         if loaded_profiles:
             logger.info("Loaded %d network profile files from %s", loaded_profiles,
                         settings.network_profiles_directory)
@@ -261,6 +265,20 @@ def create_app(settings: Settings | None = None) -> Flask:
                                default_network=values.get("default_network_key", "allstarlink"),
                                advanced_networks=values.get("advanced_node_networks") == "true")
 
+    @app.get("/networks/add")
+    @write_required
+    def add_network_page():
+        require_network_profiles()
+        return render_template("network-form.html", source="manual",
+                               fields=NETWORK_FIELD_DEFINITIONS,
+                               values=NETWORK_DEFAULTS, errors={})
+
+    @app.get("/networks/import")
+    @write_required
+    def import_network_page():
+        require_network_profiles()
+        return render_template("network-import.html")
+
     @app.get("/backup-restore")
     @write_required
     def backup_restore_page():
@@ -319,6 +337,8 @@ def create_app(settings: Settings | None = None) -> Flask:
                     db.add(node)
                     if values["interface"] == "SimpleUSB" and values["profile"] != "hub_no_radio":
                         db.add(SimpleUSBSettings(node=node))
+                    if values["interface"] == "Radio" and values["profile"] != "hub_no_radio":
+                        db.add(USBRadioSettings(node=node))
                     _record_change(db, current_user() or "", f"Set up node {node_number}", {
                         "record": "node_setup",
                         "node_number": node_number,
@@ -369,13 +389,21 @@ def create_app(settings: Settings | None = None) -> Flask:
             if node.simpleusb_settings:
                 for key in node_fields_for_file("simpleusb.conf"):
                     value = getattr(node.simpleusb_settings, key)
-                    existing[key] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
+                    existing[f"simpleusb_{key}"] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
             simpleusb_values = db.scalars(select(ConfigValue).where(
                 ConfigValue.file_name == "simpleusb.conf",
                 ConfigValue.section == str(node_number))).all()
-            existing.update({value.key: value.value for value in simpleusb_values})
+            existing.update({f"simpleusb_{value.key}": value.value for value in simpleusb_values})
+            if node.usbradio_settings:
+                for key in node_fields_for_file("usbradio.conf"):
+                    value = getattr(node.usbradio_settings, key)
+                    existing[f"usbradio_{key}"] = ("yes" if value else "no") if isinstance(value, bool) else str(value)
+            usbradio_values = db.scalars(select(ConfigValue).where(
+                ConfigValue.file_name == "usbradio.conf",
+                ConfigValue.section == str(node_number))).all()
+            existing.update({f"usbradio_{value.key}": value.value for value in usbradio_values})
         if request.method == "GET":
-            groups = node_field_groups(node_number, existing, request_locale())
+            groups = node_field_groups(node_number, existing, request_locale(), include_other_interfaces=True)
             return render_template("node-configuration.html", node_id=node_id,
                                    node_number=node_number, node_name=name,
                                    groups=[group for group in groups if not group["advanced"]],
@@ -385,7 +413,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             abort(403)
         values, errors = validate_node_settings(request.form, node_number, existing)
         if errors:
-            groups = node_field_groups(node_number, request.form, request_locale())
+            groups = node_field_groups(node_number, request.form, request_locale(), include_other_interfaces=True)
             return render_template("node-configuration.html", node_id=node_id,
                                    node_number=node_number, node_name=name,
                                    groups=[group for group in groups if not group["advanced"]],
@@ -396,21 +424,26 @@ def create_app(settings: Settings | None = None) -> Flask:
             node = db.get(Node, node_id)
             if node is None:
                 abort(404)
-            apply_node_config_values(node, values)
+            apply_node_config_values(node, {key: value for key, value in values.items()
+                                            if key in NODE_CONFIG_FIELDS})
             simpleusb_fields = node_fields_for_file("simpleusb.conf")
+            usbradio_fields = node_fields_for_file("usbradio.conf")
             usb = node.simpleusb_settings
-            if values["rxchannel"].startswith("SimpleUSB/"):
+            if values["rxchannel"].startswith("SimpleUSB/") or usb is not None:
                 if usb is None:
                     usb = SimpleUSBSettings(node=node)
                     db.add(usb)
-                for key in simpleusb_fields:
-                    definition_value = values[key]
-                    setattr(usb, key, definition_value in {"yes", "true", "1"}
-                            if key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}
-                            else int(definition_value) if key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}
-                            else definition_value)
+                apply_interface_config_values(usb, "simpleusb.conf", {
+                    key: values[f"simpleusb_{key}"] for key in simpleusb_fields})
+            radio = node.usbradio_settings
+            if values["rxchannel"].startswith("Radio/") or radio is not None:
+                if radio is None:
+                    radio = USBRadioSettings(node=node)
+                    db.add(radio)
+                apply_interface_config_values(radio, "usbradio.conf", {
+                    key: values[f"usbradio_{key}"] for key in usbradio_fields})
             for key, value in values.items():
-                if key in NODE_CONFIG_FIELDS or key in simpleusb_fields:
+                if key in NODE_CONFIG_FIELDS or key.startswith(("simpleusb_", "usbradio_")):
                     continue
                 row = db.scalar(select(ConfigValue).where(
                     ConfigValue.file_name == "rpt.conf", ConfigValue.section == str(node.node_number),
@@ -516,12 +549,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     def import_network():
         require_network_profiles()
         if request.form.get("action") == "commit":
-            try:
-                profile = {"schema_version": int(request.form.get("schema_version", "1")),
-                           "key": request.form.get("key"), "name": request.form.get("name"),
-                           "config": json.loads(request.form.get("config", "{}"))}
-            except (ValueError, json.JSONDecodeError):
-                abort(400, "Invalid network profile preview")
+            profile = _network_profile_from_form(request.form)
         else:
             uploaded = request.files.get("network")
             if uploaded is None:
@@ -534,20 +562,22 @@ def create_app(settings: Settings | None = None) -> Flask:
             profile = parse_network_profile(profile)
         except ValueError as exc:
             abort(400, str(exc))
-        stable_key, name, config = profile["key"], profile["name"], profile["config"]
+        stable_key, name = profile["key"], profile["name"]
         with sessions() as db:
             exists = db.scalar(select(Network.id).where(Network.stable_key == stable_key)) is not None
         if request.form.get("action") != "commit":
-            return render_template("network-preview.html", name=name.strip(), stable_key=stable_key,
-                                   config_json=json.dumps(config, indent=2), exists=exists,
-                                   source="upload")
+            return render_template("network-preview.html", profile=profile, exists=exists,
+                                   source="upload", field_definitions=NETWORK_FIELD_DEFINITIONS)
         with sessions.begin() as db:
             network = db.scalar(select(Network).where(Network.stable_key == stable_key))
             if network is None:
-                network = Network(stable_key=stable_key, name=name.strip(), schema_version=1, config=config)
+                network = Network(stable_key=stable_key, name=name.strip(), schema_version=2,
+                                  **network_fields(profile))
                 db.add(network)
             else:
-                network.name, network.schema_version, network.config = name.strip(), 1, config
+                network.name, network.schema_version = name.strip(), 2
+                for key, value in network_fields(profile).items():
+                    setattr(network, key, value)
             _record_change(db, current_user() or "", f"Imported network profile {name.strip()}",
                            {"record": "network", "stable_key": stable_key, "operation": "upsert"})
         dispose_database_engine(settings.database)
@@ -558,24 +588,19 @@ def create_app(settings: Settings | None = None) -> Flask:
     @write_required
     def create_network():
         require_network_profiles()
-        stable_key = request.form.get("key", "").strip()
-        name = request.form.get("name", "").strip()
-        try:
-            config = json.loads(request.form.get("config", "{}"))
-        except json.JSONDecodeError:
-            abort(400, "Configuration must be valid JSON")
-        if (not re.fullmatch(r"[a-zA-Z0-9._-]{1,120}", stable_key)
-                or not name or len(name) > 200 or not isinstance(config, dict)):
-            abort(400, "Provide a valid key, name, and JSON object configuration")
+        profile = _network_profile_from_form(request.form)
+        stable_key, name = profile["key"], profile["name"]
         with sessions() as db:
             exists = db.scalar(select(Network.id).where(Network.stable_key == stable_key)) is not None
         if exists:
             abort(409, "That network key already exists; use profile upload to update it")
         if request.form.get("action") != "commit":
-            return render_template("network-preview.html", name=name, stable_key=stable_key,
-                                   config_json=json.dumps(config, indent=2), exists=False, source="manual")
+            return render_template("network-preview.html", profile=profile,
+                                   exists=False, source="manual",
+                                   field_definitions=NETWORK_FIELD_DEFINITIONS)
         with sessions.begin() as db:
-            db.add(Network(stable_key=stable_key, name=name, schema_version=1, config=config))
+            db.add(Network(stable_key=stable_key, name=name, schema_version=2,
+                           **network_fields(profile)))
             _record_change(db, current_user() or "", f"Added network profile {name}",
                            {"record": "network", "stable_key": stable_key, "operation": "create"})
         dispose_database_engine(settings.database)
@@ -814,6 +839,27 @@ def _safe_local_redirect(target: str | None) -> str | None:
     return target
 
 
+def _network_profile_from_form(form) -> dict:
+    profile = {"schema_version": 2, "key": form.get("key", "").strip(),
+               "name": form.get("name", "").strip()}
+    for definition in NETWORK_FIELD_DEFINITIONS:
+        key = definition["key"]
+        raw = form.get(key, "")
+        if definition["type"] == "boolean":
+            profile[key] = raw in {"true", "yes", "1", "on"}
+        elif definition["type"] == "number":
+            try:
+                profile[key] = int(raw)
+            except (TypeError, ValueError):
+                profile[key] = raw
+        else:
+            profile[key] = raw.strip()
+    try:
+        return parse_network_profile(profile)
+    except ValueError as exc:
+        abort(400, str(exc))
+
+
 def _read_writer_response(client: socket.socket) -> dict:
     chunks = bytearray()
     try:
@@ -885,30 +931,32 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                 db.delete(node)
     else:
         usb_fields = node_fields_for_file("simpleusb.conf")
+        radio_fields = node_fields_for_file("usbradio.conf")
         for section, entries in values.items():
-            if filename == "simpleusb.conf" and section.isdigit():
+            if filename in {"simpleusb.conf", "usbradio.conf"} and section.isdigit():
                 node = db.query(Node).filter_by(node_number=int(section)).one_or_none()
                 if node is None:
                     node = Node(node_number=int(section), name=f"Node {section}")
                     db.add(node)
-                if node.simpleusb_settings is None:
-                    node.simpleusb_settings = SimpleUSBSettings()
+                is_radio = filename == "usbradio.conf"
+                known_fields = radio_fields if is_radio else usb_fields
+                relation_name = "usbradio_settings" if is_radio else "simpleusb_settings"
+                settings_type = USBRadioSettings if is_radio else SimpleUSBSettings
+                typed = getattr(node, relation_name)
+                if typed is None:
+                    typed = settings_type()
+                    setattr(node, relation_name, typed)
+                typed_values = {}
                 for key, value in entries.items():
-                    if key not in usb_fields:
+                    if key not in known_fields:
                         previous = prior_values.get((section, key))
                         if value == SECRET_VALUE and previous is not None and previous.secret:
                             value = previous.value
                         db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
                                            secret=is_secret_key(key)))
-                    elif key in {"rxboost", "deemphasis", "plfilter", "invertptt", "preemphasis"}:
-                        setattr(node.simpleusb_settings, key, value.lower() in {"yes", "true", "1", "on"})
-                    elif key in {"rxondelay", "txoffdelay", "rxmixerset", "txmixaset", "txmixbset"}:
-                        try:
-                            setattr(node.simpleusb_settings, key, int(value))
-                        except ValueError:
-                            pass
                     else:
-                        setattr(node.simpleusb_settings, key, value)
+                        typed_values[key] = value
+                apply_interface_config_values(typed, filename, typed_values)
                 continue
             for key, value in entries.items():
                 previous = prior_values.get((section, key))
