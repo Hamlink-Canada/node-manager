@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from sqlalchemy import select
 
-from .database import session_factory
 from .configuration import node_config_values, node_fields_for_file
+from .database import session_factory
 from .models import ConfigValue, CustomLine, Network, Node, Setting
 
 GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
@@ -30,6 +30,36 @@ def section_header(section: str) -> str:
     return f"[{name}]{suffix or ''}"
 
 
+def order_sections(sections: list[str]) -> list[str]:
+    """Keep Asterisk template sections before sections that inherit from them."""
+    unique = list(dict.fromkeys(section for section in sections if section))
+    templates = {section[:-3]: section for section in unique if section.endswith("(!)")}
+    parents: dict[str, str] = {}
+    for section in unique:
+        match = re.fullmatch(r"(.+)\(([^()]*)\)", section)
+        if match and match.group(2) != "!" and match.group(2) in templates:
+            parents[section] = templates[match.group(2)]
+
+    ordered: list[str] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(section: str) -> None:
+        if section in visited or section in visiting:
+            return
+        visiting.add(section)
+        parent = parents.get(section)
+        if parent is not None:
+            visit(parent)
+        visiting.remove(section)
+        visited.add(section)
+        ordered.append(section)
+
+    for section in unique:
+        visit(section)
+    return ordered
+
+
 def render_database(database: str | Path) -> dict[str, bytes]:
     templates = Environment(loader=PackageLoader("asterisk_node_manager", "conf"),
                             autoescape=False, undefined=StrictUndefined,
@@ -45,7 +75,7 @@ def render_database(database: str | Path) -> dict[str, bytes]:
         file_values = list(session.scalars(select(ConfigValue).order_by(
             ConfigValue.file_name, ConfigValue.section, ConfigValue.key)))
         custom_lines = list(session.scalars(select(CustomLine).order_by(
-            CustomLine.file_name, CustomLine.section, CustomLine.line_number)))
+            CustomLine.file_name, CustomLine.id)))
         nodes_context = []
         usb_values = []
         for node in nodes:
@@ -79,6 +109,11 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                     nodes=nodes_context,
                     values=[value for value in values if not value.section.isdigit()],
                     custom_lines=[line for line in custom if not line.section.isdigit()],
+                    global_custom_lines=[line for line in custom if not line.section],
+                    sections=order_sections([
+                        *(line.section for line in custom if line.section and not line.section.isdigit()),
+                        *(value.section for value in values if value.section and not value.section.isdigit()),
+                    ]),
                     section_header=section_header)
             else:
                 if filename == "simpleusb.conf":
@@ -88,7 +123,10 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                     values.sort(key=lambda value: (value.section, value.key))
                 content = templates.get_template("generic.conf.j2").render(
                     filename=filename, values=values, custom_lines=custom,
-                    sections=sorted({row.section for row in values + custom}),
+                    sections=order_sections([
+                        *(line.section for line in custom),
+                        *(value.section for value in values),
+                    ]),
                     section_header=section_header)
             output[filename] = content.encode("utf-8")
     return output

@@ -29,6 +29,10 @@ case "$1" in
       /usr/bin/astnode --config "$config" init
       chown asterisk-node-manager:asterisk-node-manager "$database"
       chmod 0640 "$database"
+      if [ -e "${database}.lock" ]; then
+        chown asterisk-node-manager:asterisk-node-manager "${database}.lock"
+        chmod 0600 "${database}.lock"
+      fi
     fi
     ;;
 esac

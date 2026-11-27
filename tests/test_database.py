@@ -2,8 +2,14 @@ import os
 import sqlite3
 import stat
 
-from asterisk_node_manager.database import create_database_engine, sqlite_snapshot
 from sqlalchemy.pool import NullPool
+
+from asterisk_node_manager.database import (
+    acquire_database_write_lock,
+    create_database_engine,
+    release_database_write_lock,
+    sqlite_snapshot,
+)
 
 
 def test_snapshot_stays_private_if_ownership_cannot_be_copied(monkeypatch, tmp_path):
@@ -29,3 +35,21 @@ def test_file_database_engine_does_not_retain_connections(tmp_path):
         assert isinstance(engine.pool, NullPool)
     finally:
         engine.dispose()
+
+
+def test_database_write_lock_uses_database_ownership_and_reuses_sidecar(tmp_path):
+    database = tmp_path / "manager.sqlite3"
+    database.touch()
+    lock_path = tmp_path / "manager.sqlite3.lock"
+
+    first_fd = acquire_database_write_lock(database)
+    first_stat = lock_path.stat()
+    release_database_write_lock(first_fd)
+    second_fd = acquire_database_write_lock(database)
+    try:
+        second_stat = lock_path.stat()
+        assert first_stat.st_ino == second_stat.st_ino
+        assert (second_stat.st_uid, second_stat.st_gid) == (database.stat().st_uid,
+                                                           database.stat().st_gid)
+    finally:
+        release_database_write_lock(second_fd)

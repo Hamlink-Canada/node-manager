@@ -1,4 +1,8 @@
-from asterisk_node_manager.asterisk_config import SECRET_VALUE, is_secret_key, parse_config
+from asterisk_node_manager.asterisk_config import (
+    SECRET_VALUE,
+    is_secret_key,
+    parse_config,
+)
 
 
 def test_parse_config_keeps_sections_comments_and_unparsed_lines():
@@ -40,6 +44,10 @@ def test_parser_preserves_repeated_directives_inherited_headers_and_inline_comme
     rpt, lines = parse_config("rpt.conf", "[1234]\nhangtime = 2000 ; squelch tail\n")
     assert rpt["1234"]["hangtime"] == "2000"
     assert lines["1234"] == ["; squelch tail"]
+
+    rpt, lines = parse_config("rpt.conf", "[1234]\nhangtime=1200;inline note\n")
+    assert rpt["1234"]["hangtime"] == "1200"
+    assert lines["1234"] == [";inline note"]
 
     iax, directives = parse_config("iax.conf", "[general]\nregister => user:one@host\nregister => user:two@host\n")
     assert iax["general"] == {}

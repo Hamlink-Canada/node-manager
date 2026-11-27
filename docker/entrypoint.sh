@@ -36,6 +36,10 @@ if [ "${1:-}" = "astnode-web" ] && [ "$(id -u)" -eq 0 ]; then
         database_directory=$(dirname "$database_path")
         mkdir -p "$database_directory"
         chown asterisk-node-manager:asterisk-node-manager "$database_directory" "$database_path"
+        if [ -e "${database_path}.lock" ]; then
+            chown asterisk-node-manager:asterisk-node-manager "${database_path}.lock"
+            chmod 0600 "${database_path}.lock"
+        fi
     fi
     chown root:asterisk-node-manager "$ASTNODE_SECRET_KEY_FILE"
     chmod 0640 "$ASTNODE_SECRET_KEY_FILE"

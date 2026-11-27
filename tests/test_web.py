@@ -1,10 +1,15 @@
-from io import BytesIO
 import hashlib
 import json
+from io import BytesIO
+
 import pytest
 
 from asterisk_node_manager.config import Settings
-from asterisk_node_manager.database import is_memory_database, session_factory
+from asterisk_node_manager.database import (
+    is_memory_database,
+    session_factory,
+    sqlite_snapshot,
+)
 from asterisk_node_manager.migrate import upgrade_database
 from asterisk_node_manager.models import ConfigValue, CustomLine, Network, Node, Setting
 from asterisk_node_manager.web import create_app
@@ -215,6 +220,43 @@ def test_web_database_backup_and_restore_reverts_later_changes(tmp_path):
         _dispose(restored_sessions, settings.database)
     finally:
         _dispose(sessions, settings.database)
+
+
+def test_file_database_restore_replaces_database_and_allows_a_later_write(monkeypatch, tmp_path):
+    settings = Settings(database=tmp_path / "manager.sqlite3",
+                        writer_allowlist=tmp_path / "writers",
+                        secret_key_file=tmp_path / "secret-key")
+    settings.writer_allowlist.write_text("writer\n")
+    settings.secret_key_file.write_text("test-secret-key")
+    upgrade_database(settings.database)
+    sessions = session_factory(settings.database)
+    with sessions.begin() as db:
+        db.add(Node(node_number=9080, name="Backup node"))
+    backup = sqlite_snapshot(settings.database)
+    try:
+        with sessions.begin() as db:
+            db.add(Node(node_number=9081, name="Later node"))
+        monkeypatch.setattr("asterisk_node_manager.web._request_generation", lambda _settings: None)
+        app = create_app(settings)
+        app.config.update(TESTING=True)
+        client = app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session["username"] = "writer"
+
+        restored = client.post("/restore", data={
+            "database": (BytesIO(backup.read_bytes()), "backup.sqlite3")
+        }, content_type="multipart/form-data")
+        assert restored.status_code == 302
+        with sessions() as db:
+            assert db.query(Node).filter_by(node_number=9080).one().name == "Backup node"
+            assert db.query(Node).filter_by(node_number=9081).count() == 0
+        with sessions.begin() as db:
+            db.add(Node(node_number=9082, name="Post-restore write"))
+        with sessions() as db:
+            assert db.query(Node).filter_by(node_number=9082).one().name == "Post-restore write"
+    finally:
+        backup.unlink(missing_ok=True)
+        sessions.kw["bind"].dispose()
 
 
 def test_demo_memory_database_supports_download_and_restore(tmp_path):

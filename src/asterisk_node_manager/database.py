@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import fcntl
+import grp
+import os
+import pwd
 import sqlite3
 import tempfile
 from contextlib import contextmanager
@@ -13,7 +15,6 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
-
 
 Base = declarative_base()
 _memory_engines: dict[str, Engine] = {}
@@ -74,6 +75,18 @@ def acquire_database_write_lock(database: str | Path) -> int | None:
     lock_path = db_path.with_name(db_path.name + ".lock")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
+        if db_path.exists():
+            owner = db_path.stat()
+            owner_uid, owner_gid = owner.st_uid, owner.st_gid
+        else:
+            try:
+                owner_uid = pwd.getpwnam("asterisk-node-manager").pw_uid
+                owner_gid = grp.getgrnam("asterisk-node-manager").gr_gid
+            except KeyError:
+                owner_uid, owner_gid = os.geteuid(), os.getegid()
+        lock_stat = os.fstat(fd)
+        if (lock_stat.st_uid, lock_stat.st_gid) != (owner_uid, owner_gid):
+            os.fchown(fd, owner_uid, owner_gid)
         fcntl.flock(fd, fcntl.LOCK_EX)
     except Exception:
         os.close(fd)

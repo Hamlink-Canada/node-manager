@@ -1,64 +1,140 @@
-"""Runtime configuration loading."""
+"""Dynaconf-backed runtime settings and compatibility adapters."""
 
 from __future__ import annotations
 
 import os
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from dynaconf import Dynaconf
+from dynaconf.loaders import env_loader
+
+DEFAULTS = {
+    "paths": {
+        "database": "/var/lib/asterisk-node-manager/manager.sqlite3",
+        "asterisk_directory": "/etc/asterisk",
+        "writer_socket": "/run/asterisk-node-manager/writer.sock",
+        "writer_allowlist": "/etc/asterisk-node-manager/writers",
+        "asterisk_cli": "/usr/sbin/asterisk",
+        "demo_output_directory": "/tmp/asterisk-node-manager-demo",
+    },
+    "web": {
+        "listen_address": "127.0.0.1",
+        "port": 8765,
+        "pam_service": "asterisk-node-manager",
+        "secret_key_file": "/etc/asterisk-node-manager/secret-key",
+        "demo_mode": False,
+    },
+}
+
+# Retain the environment names used by the initial releases. New nested
+# Dynaconf variables such as ASTNODE_PATHS__DATABASE are also supported.
+LEGACY_ENVIRONMENT_KEYS = {
+    "ASTNODE_DATABASE": ("paths", "database"),
+    "ASTNODE_ASTERISK_DIRECTORY": ("paths", "asterisk_directory"),
+    "ASTNODE_WRITER_SOCKET": ("paths", "writer_socket"),
+    "ASTNODE_WRITER_ALLOWLIST": ("paths", "writer_allowlist"),
+    "ASTNODE_ASTERISK_CLI": ("paths", "asterisk_cli"),
+    "ASTNODE_DEMO_OUTPUT_DIRECTORY": ("paths", "demo_output_directory"),
+    "ASTNODE_LISTEN_ADDRESS": ("web", "listen_address"),
+    "ASTNODE_PORT": ("web", "port"),
+    "ASTNODE_PAM_SERVICE": ("web", "pam_service"),
+    "ASTNODE_SECRET_KEY_FILE": ("web", "secret_key_file"),
+    "ASTNODE_DEMO": ("web", "demo_mode"),
+}
 
 
 @dataclass(frozen=True)
 class Settings:
-    database: Path | str = Path("/var/lib/asterisk-node-manager/manager.sqlite3")
-    asterisk_directory: Path = Path("/etc/asterisk")
-    writer_socket: Path = Path("/run/asterisk-node-manager/writer.sock")
-    writer_allowlist: Path = Path("/etc/asterisk-node-manager/writers")
-    asterisk_cli: Path = Path("/usr/sbin/asterisk")
-    listen_address: str = "127.0.0.1"
-    port: int = 8765
-    pam_service: str = "asterisk-node-manager"
-    secret_key_file: Path = Path("/etc/asterisk-node-manager/secret-key")
-    demo_mode: bool = False
-    demo_output_directory: Path = Path("/tmp/asterisk-node-manager-demo")
+    """Typed settings adapter used by application services and tests."""
+
+    database: Path | str = Path(DEFAULTS["paths"]["database"])
+    asterisk_directory: Path = Path(DEFAULTS["paths"]["asterisk_directory"])
+    writer_socket: Path = Path(DEFAULTS["paths"]["writer_socket"])
+    writer_allowlist: Path = Path(DEFAULTS["paths"]["writer_allowlist"])
+    asterisk_cli: Path = Path(DEFAULTS["paths"]["asterisk_cli"])
+    listen_address: str = DEFAULTS["web"]["listen_address"]
+    port: int = DEFAULTS["web"]["port"]
+    pam_service: str = DEFAULTS["web"]["pam_service"]
+    secret_key_file: Path = Path(DEFAULTS["web"]["secret_key_file"])
+    demo_mode: bool = DEFAULTS["web"]["demo_mode"]
+    demo_output_directory: Path = Path(DEFAULTS["paths"]["demo_output_directory"])
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
-    explicit_config = path is not None or "ASTNODE_CONFIG" in os.environ
-    config_path = Path(path or os.environ.get("ASTNODE_CONFIG", "node-manager.toml"))
+    """Load defaults, the optional TOML file, ASTNODE environment, and demo safety."""
+    environment_path = os.environ.get("ASTNODE_CONFIG")
+    explicit_config = path is not None or environment_path is not None
+    config_path = Path(path or environment_path or "node-manager.toml")
     if explicit_config and not config_path.is_file():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
-    raw = {}
-    if config_path.exists():
-        with config_path.open("rb") as stream:
-            raw = tomllib.load(stream)
-    paths = raw.get("paths", {})
-    web = raw.get("web", {})
-    demo_mode = os.environ.get("ASTNODE_DEMO", str(web.get("demo_mode", "false"))).lower() in {
-        "1", "true", "yes", "on"}
-    # Demo data must never touch a configured production database. SQLite's
-    # in-memory database is scoped to this application process and disappears
-    # when it exits.
+
+    settings = Dynaconf(
+        envvar_prefix="ASTNODE",
+        environments=False,
+        merge_enabled=True,
+        settings_files=[],
+        load_dotenv=False,
+    )
+    settings.update(DEFAULTS)
+    if config_path.is_file():
+        settings.load_file(path=str(config_path))
+
+    # Match the other Hamlink services: defaults first, file values second,
+    # environment overrides last. Keep the original flat environment names
+    # working while allowing Dynaconf's nested __ syntax for new deployments.
+    env_loader.load(settings, env="ASTNODE")
+    for environment_key, (section, key) in LEGACY_ENVIRONMENT_KEYS.items():
+        if environment_key in os.environ:
+            settings.update({section: {key: os.environ[environment_key]}}, merge=True)
+
+    demo_mode = _as_bool(settings.WEB.DEMO_MODE, "web.demo_mode")
     if demo_mode:
+        # Demo data must never touch a configured production database. SQLite's
+        # in-memory database is scoped to this application process.
         database: Path | str = ":memory:"
     else:
-        database = Path(os.environ.get("ASTNODE_DATABASE", paths.get("database", Settings.database)))
+        database = _path(settings.PATHS.DATABASE, "paths.database")
+
+    port_value = settings.WEB.PORT
+    if isinstance(port_value, bool) or not isinstance(port_value, (int, str)):
+        raise TypeError("web.port must be an integer from 1 to 65535")
+    try:
+        port = int(port_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("web.port must be an integer from 1 to 65535") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("web.port must be an integer from 1 to 65535")
+
     return Settings(
         database=database,
-        asterisk_directory=Path(os.environ.get(
-            "ASTNODE_ASTERISK_DIRECTORY", paths.get("asterisk_directory", Settings.asterisk_directory))),
-        writer_socket=Path(os.environ.get(
-            "ASTNODE_WRITER_SOCKET", paths.get("writer_socket", Settings.writer_socket))),
-        writer_allowlist=Path(os.environ.get(
-            "ASTNODE_WRITER_ALLOWLIST", paths.get("writer_allowlist", Settings.writer_allowlist))),
-        asterisk_cli=Path(os.environ.get("ASTNODE_ASTERISK_CLI", paths.get("asterisk_cli", Settings.asterisk_cli))),
-        listen_address=str(os.environ.get("ASTNODE_LISTEN_ADDRESS", web.get("listen_address", "127.0.0.1"))),
-        port=int(os.environ.get("ASTNODE_PORT", web.get("port", 8765))),
-        pam_service=str(os.environ.get("ASTNODE_PAM_SERVICE", web.get("pam_service", "asterisk-node-manager"))),
-        secret_key_file=Path(os.environ.get(
-            "ASTNODE_SECRET_KEY_FILE", web.get("secret_key_file", Settings.secret_key_file))),
+        asterisk_directory=_path(settings.PATHS.ASTERISK_DIRECTORY, "paths.asterisk_directory"),
+        writer_socket=_path(settings.PATHS.WRITER_SOCKET, "paths.writer_socket"),
+        writer_allowlist=_path(settings.PATHS.WRITER_ALLOWLIST, "paths.writer_allowlist"),
+        asterisk_cli=_path(settings.PATHS.ASTERISK_CLI, "paths.asterisk_cli"),
+        listen_address=str(settings.WEB.LISTEN_ADDRESS),
+        port=port,
+        pam_service=str(settings.WEB.PAM_SERVICE),
+        secret_key_file=_path(settings.WEB.SECRET_KEY_FILE, "web.secret_key_file"),
         demo_mode=demo_mode,
-        demo_output_directory=Path(os.environ.get(
-            "ASTNODE_DEMO_OUTPUT_DIRECTORY", paths.get("demo_output_directory",
-                "/tmp/asterisk-node-manager-demo"))),
+        demo_output_directory=_path(settings.PATHS.DEMO_OUTPUT_DIRECTORY,
+                                     "paths.demo_output_directory"),
     )
+
+
+def _path(value: str | Path, name: str) -> Path:
+    if not str(value).strip():
+        raise ValueError(f"{name} must not be empty")
+    return Path(value)
+
+
+def _as_bool(value: object, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{name} must be a boolean")

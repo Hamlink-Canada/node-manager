@@ -1,7 +1,12 @@
+from asterisk_node_manager.asterisk_config import parse_config
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.generate import render_database
-from asterisk_node_manager.asterisk_config import parse_config
-from asterisk_node_manager.models import ConfigValue, CustomLine, Node, SimpleUSBSettings
+from asterisk_node_manager.models import (
+    ConfigValue,
+    CustomLine,
+    Node,
+    SimpleUSBSettings,
+)
 
 
 def test_generation_renders_typed_node_and_simpleusb_settings(database):
@@ -32,7 +37,7 @@ def test_generation_renders_typed_node_and_simpleusb_settings(database):
 
 def test_inheritance_suffixes_survive_import_and_render(database):
     sessions = session_factory(database)
-    source = "[internal](base)\nexten => 100,1,Answer()\n\n[base](!)\npriorityjumping=no\n"
+    source = "[alpha](zbase)\nexten => 100,1,Answer()\n\n[zbase](!)\npriorityjumping=no\n"
     values, lines = parse_config("extensions.conf", source)
     try:
         with sessions.begin() as session:
@@ -48,6 +53,29 @@ def test_inheritance_suffixes_survive_import_and_render(database):
     finally:
         sessions.kw["bind"].dispose()
 
-    assert "[internal](base)" in rendered
-    assert "[base](!)" in rendered
-    assert "[internal(base)]" not in rendered
+    assert "[alpha](zbase)" in rendered
+    assert "[zbase](!)" in rendered
+    assert "[alpha(zbase)]" not in rendered
+    assert rendered.index("[zbase](!)") < rendered.index("[alpha](zbase)")
+
+
+def test_rpt_global_include_precedes_parent_and_custom_only_sections(database):
+    sessions = session_factory(database)
+    try:
+        with sessions.begin() as session:
+            session.add_all([
+                CustomLine(file_name="rpt.conf", section="", line_number=0,
+                           content='#include "rpt-templates.conf"'),
+                CustomLine(file_name="rpt.conf", section="alpha(zbase)", line_number=0,
+                           content="functions = 1"),
+                CustomLine(file_name="rpt.conf", section="zbase(!)", line_number=0,
+                           content="duplex = 0"),
+            ])
+        rendered = render_database(database)["rpt.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert rendered.index('#include "rpt-templates.conf"') < rendered.index("[zbase](!)")
+    assert rendered.index("[zbase](!)") < rendered.index("[alpha](zbase)")
+    assert "functions = 1" in rendered
+    assert "duplex = 0" in rendered

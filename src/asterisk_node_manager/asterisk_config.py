@@ -60,6 +60,6 @@ def _split_inline_comment(value: str) -> tuple[str, str | None]:
         if char == '"':
             quoted = not quoted
             continue
-        if char == ";" and not quoted and index > 0 and value[index - 1].isspace():
+        if char == ";" and not quoted:
             return value[:index].rstrip(), value[index:].strip()
     return value.strip(), None
