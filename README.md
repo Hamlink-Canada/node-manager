@@ -38,9 +38,14 @@ servers, status reporting URL and interval, node lookup method, DNS domain,
 maximum DNS node ID length, and external node file fields. These values are
 stored in separate SQLite columns; profiles do not accept an opaque config
 object. The upload format is documented in docs/network-profile.schema.json.
-Network profiles are disabled by default. Enable them from the web app's
-Settings page to show the profile manager. On startup, the web and writer
-services scan `paths.network_profiles_directory` (default
+Network profiles are disabled by default. Enable them in Dynaconf with
+`networks.profiles_enabled = true` (or
+`ASTNODE_NETWORKS__PROFILES_ENABLED=true`) and restart both services. In
+single-network mode, choose the network in Dynaconf with
+`networks.default_network` (or `ASTNODE_NETWORKS__DEFAULT_NETWORK`). When
+multi-network mode is enabled from the Network profiles page, the web app can
+set the default network there. On startup, the web and writer services scan
+`paths.network_profiles_directory` (default
 `/etc/asterisk-node-manager/networks`) for `*.json` profiles and insert or
 update records by profile key. In Docker Compose, place profiles in the local
 `network-profiles/` directory. The AllStarLink profile remains the only

@@ -52,7 +52,9 @@ def test_fresh_database_has_typed_settings_and_only_allstarlink_network(tmp_path
         assert allstar == ("http", "register.allstarlink.org",
                            "http://stats.allstarlink.org/uhandler", "dns", "nodes.allstarlink.org")
         assert connection.execute(text(
-            "SELECT value FROM settings WHERE key='network_profiles_enabled'")).scalar_one() == "false"
+            "SELECT count(*) FROM settings WHERE key='network_profiles_enabled'")).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT count(*) FROM settings WHERE key='default_network_key'")).scalar_one() == 0
     engine.dispose()
 
 

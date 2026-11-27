@@ -61,7 +61,9 @@ def handle_request(request: bytes, settings) -> dict:
             return {"ok": False, "error": f"Asterisk command failed: {exc}"}
         return {"ok": result.returncode == 0, "output": result.stdout or result.stderr}
     try:
-        generated = render_database(settings.database)
+        generated = render_database(
+            settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+            default_network=settings.default_network)
         _replace_files(settings.asterisk_directory, generated)
     except Exception as exc:
         return {"ok": False, "error": f"generation failed: {exc}"}
@@ -137,7 +139,9 @@ def main() -> int:
     try:
         # Reconcile interrupted publication before serving clients when a database exists.
         if not settings.demo_mode and database_exists(settings.database):
-            _replace_files(settings.asterisk_directory, render_database(settings.database))
+            _replace_files(settings.asterisk_directory, render_database(
+                settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+                default_network=settings.default_network))
         while True:
             connection, _ = server.accept()
             with connection:

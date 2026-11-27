@@ -5,7 +5,7 @@ import sqlalchemy as sa
 
 
 revision = "0005_usbradio_settings"
-down_revision = "0004_network_profile_controls"
+down_revision = "0003_explicit_node_settings"
 branch_labels = None
 depends_on = None
 

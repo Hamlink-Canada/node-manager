@@ -12,3 +12,7 @@ port = 8765
 pam_service = "asterisk-node-manager"
 secret_key_file = "/etc/asterisk-node-manager/secret-key"
 demo_mode = false
+
+[networks]
+profiles_enabled = false
+default_network = "allstarlink"

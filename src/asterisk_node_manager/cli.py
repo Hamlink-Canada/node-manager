@@ -62,7 +62,9 @@ def main() -> int:
         _require_root()
         from .generate import render_database
         from .writer import _replace_files
-        _replace_files(settings.asterisk_directory, render_database(settings.database))
+        _replace_files(settings.asterisk_directory, render_database(
+            settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+            default_network=settings.default_network))
         print(f"Generated Asterisk configuration in {settings.asterisk_directory}")
         return 0
     if args.command == "backup":
@@ -112,7 +114,9 @@ def main() -> int:
             upgrade_database(settings.database)
             from .generate import render_database
             from .writer import _replace_files
-            _replace_files(settings.asterisk_directory, render_database(settings.database))
+            _replace_files(settings.asterisk_directory, render_database(
+                settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+                default_network=settings.default_network))
         except Exception:
             if previous is not None and previous.exists():
                 os.replace(previous, settings.database)
@@ -255,7 +259,9 @@ def _import_config(path: Path, commit: bool, settings) -> int:
         db.commit()
     from .writer import _replace_files
     from .generate import render_database
-    _replace_files(settings.asterisk_directory, render_database(settings.database))
+    _replace_files(settings.asterisk_directory, render_database(
+        settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+        default_network=settings.default_network))
     print(f"Imported {len(files)} files and regenerated Asterisk configuration.")
     return 0
 

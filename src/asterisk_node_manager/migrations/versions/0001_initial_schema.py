@@ -58,8 +58,7 @@ def upgrade() -> None:
     op.bulk_insert(networks, [{"stable_key": "allstarlink", "name": "AllStarLink",
                                "schema_version": 1, "config": {}}])
     settings = sa.table("settings", sa.column("key", sa.String), sa.column("value", sa.Text))
-    op.bulk_insert(settings, [{"key": "default_network_key", "value": "allstarlink"},
-                              {"key": "advanced_node_networks", "value": "false"}])
+    op.bulk_insert(settings, [{"key": "advanced_node_networks", "value": "false"}])
 
 
 def downgrade() -> None:

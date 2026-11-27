@@ -61,18 +61,19 @@ def order_sections(sections: list[str]) -> list[str]:
     return ordered
 
 
-def render_database(database: str | Path) -> dict[str, bytes]:
+def render_database(database: str | Path, *, network_profiles_enabled: bool = False,
+                    default_network: str = "allstarlink") -> dict[str, bytes]:
     templates = Environment(loader=PackageLoader("asterisk_node_manager", "conf"),
                             autoescape=False, undefined=StrictUndefined,
                             keep_trailing_newline=True)
     output: dict[str, bytes] = {}
     with session_factory(database)() as session:
         settings = {row.key: row.value for row in session.scalars(select(Setting))}
-        default_key = settings.get("default_network_key", "")
-        default_network = session.scalar(select(Network).where(Network.stable_key == default_key))
-        profiles_enabled = settings.get("network_profiles_enabled", "false").lower() == "true"
-        advanced_networks = (profiles_enabled
+        advanced_networks = (network_profiles_enabled
                              and settings.get("advanced_node_networks", "false").lower() == "true")
+        default_key = (settings.get("default_network_key") or default_network
+                       if advanced_networks else default_network)
+        default_profile = session.scalar(select(Network).where(Network.stable_key == default_key))
         nodes = list(session.scalars(select(Node).order_by(Node.node_number)))
         simpleusb_fields = node_fields_for_file("simpleusb.conf")
         usbradio_fields = node_fields_for_file("usbradio.conf")
@@ -84,7 +85,7 @@ def render_database(database: str | Path) -> dict[str, bytes]:
         usb_values = []
         radio_values = []
         for node in nodes:
-            network = node.network if advanced_networks and node.network else default_network
+            network = node.network if advanced_networks and node.network else default_profile
             advanced = {value.key: value.value for value in file_values
                         if value.file_name == "rpt.conf" and value.section == str(node.node_number)
                         and value.key not in node_config_values(node)}

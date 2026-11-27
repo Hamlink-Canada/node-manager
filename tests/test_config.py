@@ -7,7 +7,7 @@ from asterisk_node_manager.config import load_settings
 
 def test_settings_load_toml_and_environment_overrides(monkeypatch, tmp_path):
     config = tmp_path / "node-manager.toml"
-    config.write_text('''[paths]\ndatabase = "./db.sqlite3"\nasterisk_directory = "./etc-asterisk"\n\n[web]\nlisten_address = "0.0.0.0"\nport = 9000\ndemo_mode = true\n''')
+    config.write_text('''[paths]\ndatabase = "./db.sqlite3"\nasterisk_directory = "./etc-asterisk"\n\n[web]\nlisten_address = "0.0.0.0"\nport = 9000\ndemo_mode = true\n\n[networks]\nprofiles_enabled = true\ndefault_network = "example.net"\n''')
     monkeypatch.setenv("ASTNODE_WEB__PORT", "9876")
 
     settings = load_settings(config)
@@ -17,6 +17,8 @@ def test_settings_load_toml_and_environment_overrides(monkeypatch, tmp_path):
     assert settings.listen_address == "0.0.0.0"
     assert settings.port == 9876
     assert settings.demo_mode is True
+    assert settings.network_profiles_enabled is True
+    assert settings.default_network == "example.net"
 
 
 def test_explicit_missing_config_is_an_error(monkeypatch, tmp_path):
@@ -34,14 +36,22 @@ def test_dynaconf_nested_environment_overrides_toml(monkeypatch, tmp_path):
 [web]
 listen_address = "127.0.0.1"
 port = 8765
+
+[networks]
+profiles_enabled = false
+default_network = "from-file.net"
 ''', encoding="utf-8")
     monkeypatch.setenv("ASTNODE_PATHS__DATABASE", "./from-env.sqlite3")
     monkeypatch.setenv("ASTNODE_WEB__PORT", "9010")
+    monkeypatch.setenv("ASTNODE_NETWORKS__PROFILES_ENABLED", "true")
+    monkeypatch.setenv("ASTNODE_NETWORKS__DEFAULT_NETWORK", "from-env.net")
 
     settings = load_settings(config)
 
     assert settings.database == Path("from-env.sqlite3")
     assert settings.port == 9010
+    assert settings.network_profiles_enabled is True
+    assert settings.default_network == "from-env.net"
 
 
 @pytest.mark.parametrize("value", ["invalid", "0", "65536"])

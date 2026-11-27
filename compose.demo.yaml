@@ -5,6 +5,8 @@ services:
     command: ["astnode-web"]
     environment:
       ASTNODE_WEB__DEMO_MODE: "true"
+      ASTNODE_NETWORKS__PROFILES_ENABLED: "true"
+      ASTNODE_NETWORKS__DEFAULT_NETWORK: "allstarlink"
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /demo-output
       ASTNODE_PATHS__DEMO_OUTPUT_DIRECTORY: /demo-output
       ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/no-helper.sock

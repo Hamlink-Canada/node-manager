@@ -6,10 +6,12 @@ creates the schema and seeds the initial network profile.
 
 Network profile files are discovered from the configured profile directory on
 web and writer service startup. Each valid `*.json` file is upserted by its
-stable profile key; invalid files are skipped and logged. Profile management
-and per-node profile assignment are hidden and inactive until the database
-setting `network_profiles_enabled` is enabled. When profiles are disabled,
-`default_network_key` selects the network used for all nodes.
+stable profile key; invalid files are skipped and logged. Dynaconf's
+`networks.profiles_enabled` option controls whether profile management and
+per-node profile assignment are available. When per-node multi-network mode is
+disabled, Dynaconf's `networks.default_network` selects the network used for
+all nodes. When per-node multi-network mode is enabled, the default can be
+selected in the web application and is stored in SQLite.
 
 Network profiles store their registration method and server addresses, status
 reporting options, and node lookup settings in explicit SQL columns. Profile

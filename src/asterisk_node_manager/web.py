@@ -171,18 +171,14 @@ def create_app(settings: Settings | None = None) -> Flask:
         return wrapped
 
     def require_network_profiles() -> None:
-        with sessions() as db:
-            setting = db.get(Setting, "network_profiles_enabled")
-        if setting is None or setting.value != "true":
+        if not settings.network_profiles_enabled:
             abort(404)
 
     app.jinja_env.globals["is_writer"] = lambda: current_user() in writers()
 
     @app.context_processor
     def add_network_context():
-        with sessions() as db:
-            enabled = db.get(Setting, "network_profiles_enabled")
-        return {"network_profiles_enabled": enabled is not None and enabled.value == "true"}
+        return {"network_profiles_enabled": settings.network_profiles_enabled}
 
     @app.context_processor
     def add_demo_context():
@@ -226,33 +222,25 @@ def create_app(settings: Settings | None = None) -> Flask:
         return render_template("index.html", node_count=node_count, networks=networks,
                                nodes=nodes, username=current_user(),
                                node_network_names=node_network_names,
-                               default_network=values.get("default_network_key", ""),
-                               advanced_networks=values.get("advanced_node_networks") == "true",
-                               network_profiles_enabled=values.get("network_profiles_enabled") == "true",
+                               default_network=(values.get("default_network_key") or settings.default_network
+                                                if settings.network_profiles_enabled
+                                                and values.get("advanced_node_networks") == "true"
+                                                else settings.default_network),
+                               advanced_networks=(settings.network_profiles_enabled
+                                                  and values.get("advanced_node_networks") == "true"),
+                               network_profiles_enabled=settings.network_profiles_enabled,
                                changes=changes)
 
-    @app.route("/settings", methods=["GET", "POST"])
+    @app.get("/settings")
     @write_required
     def settings_page():
-        if request.method == "POST":
-            enabled = "true" if request.form.get("network_profiles_enabled") == "true" else "false"
-            with sessions.begin() as db:
-                row = db.get(Setting, "network_profiles_enabled")
-                if row is None:
-                    db.add(Setting(key="network_profiles_enabled", value=enabled))
-                else:
-                    row.value = enabled
-                _record_change(db, current_user() or "", "Changed network profile availability",
-                               {"record": "setting", "key": "network_profiles_enabled", "value": enabled})
-            dispose_database_engine(settings.database)
-            _regenerate_or_503(settings)
-            return redirect(url_for("settings_page"))
         with sessions() as db:
-            networks = db.scalars(select(Network).order_by(Network.name)).all()
             values = {row.key: row.value for row in db.scalars(select(Setting))}
-        return render_template("settings.html", networks=networks,
-                               network_profiles_enabled=values.get("network_profiles_enabled") == "true",
-                               default_network=values.get("default_network_key", "allstarlink"))
+        return render_template("settings.html",
+                               network_profiles_enabled=settings.network_profiles_enabled,
+                               advanced_networks=(settings.network_profiles_enabled
+                                                  and values.get("advanced_node_networks") == "true"),
+                               default_network=settings.default_network)
 
     @app.get("/networks")
     @login_required
@@ -262,8 +250,10 @@ def create_app(settings: Settings | None = None) -> Flask:
             networks = db.scalars(select(Network).order_by(Network.name)).all()
             values = {row.key: row.value for row in db.scalars(select(Setting))}
         return render_template("networks.html", networks=networks,
-                               default_network=values.get("default_network_key", "allstarlink"),
-                               advanced_networks=values.get("advanced_node_networks") == "true")
+                               default_network=(values.get("default_network_key") or settings.default_network
+                                                if values.get("advanced_node_networks") == "true"
+                                                else settings.default_network),
+                               advanced_networks=(values.get("advanced_node_networks") == "true"))
 
     @app.get("/networks/add")
     @write_required
@@ -483,6 +473,9 @@ def create_app(settings: Settings | None = None) -> Flask:
     def assign_network(node_id: int):
         require_network_profiles()
         with sessions.begin() as db:
+            multi_network = db.get(Setting, "advanced_node_networks")
+            if multi_network is None or multi_network.value != "true":
+                abort(404)
             node = db.get(Node, node_id)
             if node is None:
                 abort(404)
@@ -525,7 +518,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.post("/settings/default-network")
     @write_required
     def default_network():
+        require_network_profiles()
         with sessions.begin() as db:
+            multi_network = db.get(Setting, "advanced_node_networks")
+            if multi_network is None or multi_network.value != "true":
+                abort(404)
             network = db.get(Network, request.form.get("network_id", type=int))
             if network is None:
                 abort(400, "Choose an existing network profile")
@@ -539,10 +536,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                             "network_key": network.stable_key})
         dispose_database_engine(settings.database)
         _regenerate_or_503(settings)
-        with sessions() as db:
-            enabled = db.get(Setting, "network_profiles_enabled")
-        return redirect(url_for("networks_page") if enabled and enabled.value == "true"
-                        else url_for("settings_page"))
+        return redirect(url_for("networks_page"))
 
     @app.post("/networks/import")
     @write_required
@@ -637,7 +631,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         if filename not in GENERATED_FILES:
             abort(404)
         if request.method == "GET":
-            current = render_database(settings.database).get(filename, b"").decode("utf-8")
+            current = render_database(
+                settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+                default_network=settings.default_network).get(filename, b"").decode("utf-8")
             current = _mask_secrets(current)
             return render_template("editor.html", filename=filename, content=current,
                                    preview=None, error=None, can_write=current_user() in writers())
@@ -650,7 +646,9 @@ def create_app(settings: Settings | None = None) -> Flask:
             "preserved": sum(len(lines) for lines in preserved.values()),
         }
         if request.form.get("action") == "preview":
-            current = render_database(settings.database).get(filename, b"").decode("utf-8")
+            current = render_database(
+                settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+                default_network=settings.default_network).get(filename, b"").decode("utf-8")
             diff = "\n".join(difflib.unified_diff(
                 _mask_secrets(current).splitlines(), _mask_secrets(content).splitlines(),
                 fromfile=f"current/{filename}", tofile=f"candidate/{filename}", lineterm=""))
@@ -746,7 +744,9 @@ def create_app(settings: Settings | None = None) -> Flask:
 
 def _request_generation(settings: Settings) -> None:
     if settings.demo_mode:
-        _write_demo_files(settings.demo_output_directory, render_database(settings.database))
+        _write_demo_files(settings.demo_output_directory, render_database(
+            settings.database, network_profiles_enabled=settings.network_profiles_enabled,
+            default_network=settings.default_network))
         return
     request_data = json.dumps({"operation": "generate"}).encode("utf-8")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:

@@ -102,6 +102,21 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     assert b"Download backup" not in client.get("/").data
 
 
+def test_profile_availability_is_read_only_dynaconf_configuration(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=False)
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    assert client.get("/networks").status_code == 404
+    assert b"Profiles are hidden" in client.get("/settings").data
+    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 405
+    assert client.post("/settings/network-selection", data={"enabled": "true"}).status_code == 404
+
+
 def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
@@ -199,14 +214,12 @@ def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_pat
 
 def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
-    enabled = client.post("/settings", data={"network_profiles_enabled": "true"})
-    assert enabled.status_code == 302
-
     profile = _network_profile("example.net", "Example network",
                                registration_method="iax", iax_registration_server="example.invalid",
                                iax_registration_port=4570, stats_enabled=True,
@@ -250,13 +263,12 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
 
 def test_network_add_and_import_are_separate_pages(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
-    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 302
-
     overview = client.get("/networks")
     assert b"href=\"/networks/add\"" in overview.data
     assert b"href=\"/networks/import\"" in overview.data
@@ -267,12 +279,12 @@ def test_network_add_and_import_are_separate_pages(tmp_path):
 
 def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
-    client.post("/settings", data={"network_profiles_enabled": "true"})
     profile = _network_profile("manual.example", "Manual Network",
                                registration_method="iax", iax_registration_server="iax.example.net",
                                iax_registration_port=4568, stats_enabled=True,
@@ -521,19 +533,26 @@ def test_login_ignores_external_redirect_and_rejects_oversized_node_number(tmp_p
 
 def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
-                        demo_output_directory=tmp_path / "generated")
+                        demo_output_directory=tmp_path / "generated",
+                        network_profiles_enabled=True)
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     client.post("/login")
     assert b"Download backup" not in client.get("/").data
-    assert b"Network profiles" not in client.get("/").data
-    assert client.get("/networks").status_code == 404
-    assert b"Default network" in client.get("/settings").data
-    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 302
+    assert b"Network profiles" in client.get("/").data
+    assert client.get("/networks").status_code == 200
+    settings_page = client.get("/settings")
+    assert b"networks.default_network" in settings_page.data
+    assert b"network_profiles_enabled" not in settings_page.data
+    assert client.post("/settings", data={"network_profiles_enabled": "false"}).status_code == 405
+    assert b'name="network_id"' not in client.get("/networks").data
+    assert client.post("/settings/default-network", data={"network_id": "1"}).status_code == 404
     enabled = client.post("/settings/network-selection", data={"enabled": "true"})
     assert enabled.status_code == 302
     assert b"Advanced per-node network selection" in client.get("/networks").data
+    assert b'name="network_id"' in client.get("/networks").data
+    assert client.post("/settings/default-network", data={"network_id": "1"}).status_code == 302
     assert b"Network profiles" in client.get("/").data
     assert b"Download backup" not in client.get("/").data
 
@@ -541,6 +560,7 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
     try:
         with sessions() as session:
             assert session.get(Setting, "advanced_node_networks").value == "true"
+            assert session.get(Setting, "default_network_key").value == "allstarlink"
         with sessions.begin() as session:
             session.add(Node(node_number=9044, name="Read-only target"))
         _dispose(sessions, settings.database)
