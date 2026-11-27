@@ -820,9 +820,9 @@ def create_app(settings: Settings | None = None) -> Flask:
             return jsonify(error="Unknown request fields are not allowed."), 400
         driver = payload.get("driver")
         operation = payload.get("operation")
-        if driver not in {"simpleusb", "usbradio"}:
+        if not isinstance(driver, str) or driver not in {"simpleusb", "usbradio"}:
             return jsonify(error="driver must be 'simpleusb' or 'usbradio'."), 400
-        if operation not in {"list_devices", "read_settings", "set_value"}:
+        if not isinstance(operation, str) or operation not in {"list_devices", "read_settings", "set_value"}:
             return jsonify(error="operation must be list_devices, read_settings, or set_value."), 400
         node_number = payload.get("node_number")
         device = None
@@ -837,7 +837,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 node = db.scalar(select(Node).where(Node.node_number == node_number))
                 if node is None:
                     return jsonify(error="Node Number is not configured."), 404
-                channel = node.rxchannel or ""
+                channel = node_config_values(node, _stored_defaults(db, "rpt.conf"))["rxchannel"]
             prefix = "SimpleUSB/" if driver == "simpleusb" else "Radio/"
             if not channel.startswith(prefix):
                 return jsonify(error=f"Node {node_number} is not configured for {driver}."), 400

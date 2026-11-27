@@ -29,9 +29,21 @@ The fixed tuning allowlist is:
 | USBRadio | `txslimsp` | Integer 5000–13000 |
 
 Every successful `set_value` task returns `persisted: false` and a warning.
-Live changes are not saved. Save the desired value in the web app for
-persistence; the live value remains until an Asterisk reload is requested,
-when the unsaved change is reverted. The manager does not request reloads.
+Live changes are not saved. The current web configuration has these matching
+persistent fields:
+
+| Live tuning value | Saved field in node configuration |
+| --- | --- |
+| SimpleUSB `rx` | `simpleusb.conf` `rxmixerset` |
+| SimpleUSB `txa` | `simpleusb.conf` `txmixaset` |
+| SimpleUSB `txb` | `simpleusb.conf` `txmixbset` |
+| USBRadio `rxsquelch` | `usbradio.conf` `rxsquelchadj` |
+
+Save those corresponding fields in the web app to persist their values. USBRadio
+`txvoice`, `txtone`, `auxvoice`, and `txslimsp` have no matching persistent
+fields in the current web app, so saving node configuration does not persist
+those live values. All unsaved changes remain live until an Asterisk reload is
+requested, which reverts them. The manager does not request reloads.
 
 The web service account must be able to access the configured Asterisk CLI
 socket. The API reports a corrective socket permission or path error if it

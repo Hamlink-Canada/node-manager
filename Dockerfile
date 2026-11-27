@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && (getent group asterisk >/dev/null || groupadd --gid "$ASTNODE_ASTERISK_GID" asterisk) \
     && groupmod --non-unique --gid "$ASTNODE_ASTERISK_GID" asterisk \
     && groupadd --system asterisk-node-manager \
-    && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager \
+    && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager,asterisk \
        --home-dir /nonexistent --no-create-home asterisk-node-manager \
     && install -d -o asterisk-node-manager -g asterisk-node-manager \
        /var/lib/asterisk-node-manager /etc/asterisk-node-manager /etc/asterisk-node-manager/networks \

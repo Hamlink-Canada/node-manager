@@ -105,14 +105,19 @@ class LiveTaskQueue:
                     record.update(status="succeeded", result=result,
                                   updated_at=datetime.now(timezone.utc).isoformat(),
                                   _updated_monotonic=self.clock())
+                    self._tasks.move_to_end(task.task_id)
                     if task.operation == "set_value":
-                        record.update(persisted=False, warning=self._temporary_warning())
+                        record.update(persisted=False,
+                                      warning=self._temporary_warning(task.driver, task.setting))
+                    self._trim()
                 self._audit("succeeded", record)
             except Exception as exc:
                 with self._lock:
                     record.update(status="failed", error=str(exc),
                                   updated_at=datetime.now(timezone.utc).isoformat(),
                                   _updated_monotonic=self.clock())
+                    self._tasks.move_to_end(task.task_id)
+                    self._trim()
                 self._audit("failed", record, error=str(exc))
             finally:
                 self._queue.task_done()
@@ -128,20 +133,39 @@ class LiveTaskQueue:
         return {"output": f"Demo only: {task.driver} {task.setting} would be set to {task.value}; no Asterisk connection was made."}
 
     @staticmethod
-    def _temporary_warning() -> str:
-        return ("This live change is temporary and is not saved. Save the setting in the web app "
-                "to persist it. Asterisk reload will revert it; the change remains live until a reload is requested.")
+    def _temporary_warning(driver: str, setting: str | None) -> str:
+        persistent_keys = {
+            ("simpleusb", "rx"): "rxmixerset",
+            ("simpleusb", "txa"): "txmixaset",
+            ("simpleusb", "txb"): "txmixbset",
+            ("usbradio", "rxsquelch"): "rxsquelchadj",
+        }
+        saved_key = persistent_keys.get((driver, setting))
+        if saved_key is not None:
+            persistence = f" Save the corresponding {saved_key} field in the node's web configuration to persist it."
+        else:
+            persistence = " This setting has no matching persistent field in the current web app."
+        return ("This live change is temporary and is not saved." + persistence +
+                " It remains live until an Asterisk reload is requested, which will revert the unsaved change.")
 
     def _expire(self) -> None:
         cutoff = self.clock() - TASK_TTL_SECONDS
         with self._lock:
             for task_id, record in list(self._tasks.items()):
-                if record["_updated_monotonic"] < cutoff:
+                if record["status"] in {"succeeded", "failed"} and record["_updated_monotonic"] < cutoff:
                     del self._tasks[task_id]
 
     def _trim(self) -> None:
-        while len(self._tasks) > TASK_CAPACITY:
-            self._tasks.popitem(last=False)
+        completed = sum(record["status"] in {"succeeded", "failed"}
+                        for record in self._tasks.values())
+        if completed <= TASK_CAPACITY:
+            return
+        for task_id, record in list(self._tasks.items()):
+            if completed <= TASK_CAPACITY:
+                break
+            if record["status"] in {"succeeded", "failed"}:
+                del self._tasks[task_id]
+                completed -= 1
 
     @staticmethod
     def _public(record: dict) -> dict:
