@@ -231,17 +231,6 @@ def create_app(settings: Settings | None = None) -> Flask:
                                network_profiles_enabled=settings.network_profiles_enabled,
                                changes=changes)
 
-    @app.get("/settings")
-    @write_required
-    def settings_page():
-        with sessions() as db:
-            values = {row.key: row.value for row in db.scalars(select(Setting))}
-        return render_template("settings.html",
-                               network_profiles_enabled=settings.network_profiles_enabled,
-                               advanced_networks=(settings.network_profiles_enabled
-                                                  and values.get("advanced_node_networks") == "true"),
-                               default_network=settings.default_network)
-
     @app.get("/networks")
     @login_required
     def networks_page():

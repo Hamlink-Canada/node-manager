@@ -1,8 +1,0 @@
-{% extends "layout.html" %}
-{% block title %}Settings · Asterisk Node Manager{% endblock %}
-{% block content %}
-<div class="mb-4"><p class="text-uppercase text-primary fw-semibold small mb-1">Application</p><h1 class="h2 mb-1">Settings</h1><p class="text-body-secondary">Network profile availability and the single-network default come from the Dynaconf configuration file or environment.</p></div>
-<div class="row g-4"><div class="col-lg-8"><section class="card shadow-sm"><div class="card-body"><h2 class="h5">Network profiles</h2><p><strong>{{ 'Enabled' if network_profiles_enabled else 'Disabled' }}</strong></p><p class="text-body-secondary">{{ 'Profile management is available in the menu. Change networks.profiles_enabled in Dynaconf and restart the services to change this.' if network_profiles_enabled else 'Profiles are hidden. Set networks.profiles_enabled in Dynaconf and restart the services to enable them.' }}</p>
-  {% if advanced_networks %}<p class="mb-0">Multi-network mode is enabled. Choose the default network from the Network profiles page.</p>{% else %}<p class="mb-0">Multi-network mode is disabled. The default network is <code>{{ default_network }}</code>, configured by <code>networks.default_network</code> in Dynaconf.</p>{% endif %}
-</div></section></div></div>
-{% endblock %}

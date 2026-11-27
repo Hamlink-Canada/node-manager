@@ -112,8 +112,8 @@ def test_profile_availability_is_read_only_dynaconf_configuration(tmp_path):
     client.post("/login")
 
     assert client.get("/networks").status_code == 404
-    assert b"Profiles are hidden" in client.get("/settings").data
-    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 405
+    assert client.get("/settings").status_code == 404
+    assert client.post("/settings", data={"network_profiles_enabled": "true"}).status_code == 404
     assert client.post("/settings/network-selection", data={"enabled": "true"}).status_code == 404
 
 
@@ -542,10 +542,9 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
     assert b"Download backup" not in client.get("/").data
     assert b"Network profiles" in client.get("/").data
     assert client.get("/networks").status_code == 200
-    settings_page = client.get("/settings")
-    assert b"networks.default_network" in settings_page.data
-    assert b"network_profiles_enabled" not in settings_page.data
-    assert client.post("/settings", data={"network_profiles_enabled": "false"}).status_code == 405
+    assert client.get("/settings").status_code == 404
+    assert b'href="/settings"' not in client.get("/").data
+    assert client.post("/settings", data={"network_profiles_enabled": "false"}).status_code == 404
     assert b'name="network_id"' not in client.get("/networks").data
     assert client.post("/settings/default-network", data={"network_id": "1"}).status_code == 404
     enabled = client.post("/settings/network-selection", data={"enabled": "true"})
