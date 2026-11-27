@@ -1,11 +1,12 @@
 [Unit]
 Description=Asterisk Node Manager web interface
-After=network.target asterisk-node-manager-writer.socket
+After=network.target asterisk-node-manager-writer.socket asterisk.service
 
 [Service]
 Type=simple
 User=asterisk-node-manager
 Group=asterisk-node-manager
+SupplementaryGroups=asterisk
 Environment=ASTNODE_CONFIG=/etc/asterisk-node-manager/config.toml
 ExecStart=/usr/bin/astnode-web
 Restart=on-failure

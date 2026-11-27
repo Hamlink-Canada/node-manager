@@ -33,16 +33,33 @@ contains the complete configuration and does not depend on Asterisk's
 
 The web service runs as the asterisk-node-manager system user. It cannot
 write Asterisk configuration files. It connects to the root-owned,
-systemd-activated Unix socket for three limited operations:
+systemd-activated Unix socket for two limited operations:
 
 - Authenticate a username through the configured host PAM service.
 - Render the current database and replace the fixed generated files.
-- Run one of the fixed read-only Asterisk diagnostics.
 
 The helper does not accept arbitrary command lines or file paths. It stages
 all generated files, preserves existing ownership and mode, and rolls back
 replacements if a write fails. New files use mode 0640 and the asterisk
 group when present. Asterisk reload is not requested.
+
+The web service connects to Asterisk's local CLI socket for fixed read-only
+diagnostics and allowlisted SimpleUSB/USBRadio live tuning operations. It
+resolves device names from a configured Node Number and serializes operations
+through one bounded worker queue because driver commands use shared active
+device selection. The web service needs operating-system access to Asterisk's
+CLI socket; if access is missing, the API reports how to resolve the socket
+permission or path problem. The package does not change Asterisk socket
+permissions. The root helper does not execute Asterisk CLI commands.
+
+Live tuning task results are held in a bounded in-memory LRU with a one-hour
+TTL and are polled by task ID by the submitting writer. A service restart
+clears these results. Audit events include the actor, Node Number, operation,
+driver and outcome in service logs; deployment logging must retain and rotate
+those logs. Demo mode returns mock operation results and never connects to an
+Asterisk socket. Live tuning changes are temporary; save the desired values
+through the web app to persist them. An Asterisk reload reverts unsaved live
+changes, and the manager does not request reloads.
 The writer reconciles the database to the generated files when it starts, and
 the web service requests a fresh generation before it begins listening. This
 repairs an interrupted file publication or a process restart from the current

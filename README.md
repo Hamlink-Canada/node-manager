@@ -66,6 +66,7 @@ their custom overrides so a future rule editor can restore the packaged rule.
 
 See docs/architecture.md for the local writer, PAM, migration, backup, and
 import workflows.
+See docs/live-operations.md for the live SimpleUSB and USBRadio operations API.
 
 The project is still net new and has no supported prior database version. Its
 Alembic history is intentionally a single initial migration that creates the

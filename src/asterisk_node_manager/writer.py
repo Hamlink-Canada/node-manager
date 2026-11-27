@@ -9,7 +9,6 @@ import os
 import signal
 import socket
 import stat
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -20,11 +19,7 @@ from .database import database_exists, database_write_lock
 from .networks import load_network_profiles
 from .generate import render_database
 
-ALLOWED_OPERATIONS = {"generate", "diagnostic", "authenticate"}
-DIAGNOSTIC_COMMANDS = {
-    "core show version", "core show uptime", "core show channels",
-    "iax2 show peers", "rpt show nodes", "module show",
-}
+ALLOWED_OPERATIONS = {"generate", "authenticate"}
 
 
 def _handle_shutdown(signum, _frame):
@@ -58,16 +53,6 @@ def handle_request(request: bytes, settings) -> dict:
     revision = payload.get("revision")
     if revision is not None and (not isinstance(revision, int) or revision < 0):
         return {"ok": False, "error": "invalid revision"}
-    if payload["operation"] == "diagnostic":
-        command = payload.get("command")
-        if not isinstance(command, str) or command not in DIAGNOSTIC_COMMANDS:
-            return {"ok": False, "error": "diagnostic command is not allowed"}
-        try:
-            result = subprocess.run([str(settings.asterisk_cli), "-rx", command],
-                                    check=False, capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return {"ok": False, "error": f"Asterisk command failed: {exc}"}
-        return {"ok": result.returncode == 0, "output": result.stdout or result.stderr}
     try:
         generated = render_database(
             settings.database, network_profiles_enabled=settings.network_profiles_enabled,

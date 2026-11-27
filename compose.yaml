@@ -16,9 +16,12 @@ services:
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /etc/asterisk
     ports:
       - "127.0.0.1:8765:8765"
+    logging:
+      driver: local
     volumes:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
+      - /var/run/asterisk:/var/run/asterisk
       - ./docker/writers:/etc/asterisk-node-manager/writers
       - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     depends_on:
