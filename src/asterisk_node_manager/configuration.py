@@ -176,7 +176,9 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
                 choices.append((value, f"{value} ({_message('custom', locale, catalog, english)})"))
         else:
             choices = []
-        message_prefix = "usbradio_" if interface == "Radio" else ""
+        message_prefix = "usbradio_" if interface == "Radio" else (
+            "simpleusb_" if interface == "SimpleUSB" and f"field_simpleusb_{key}" in english else ""
+        )
         by_name[group_id]["fields"].append({
             **definition,
             "form_key": form_key,
