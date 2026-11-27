@@ -24,7 +24,10 @@ class RecordingCLI:
 
 
 def test_simpleusb_handlers_use_driver_commands_and_fixed_response_shape():
-    cli = RecordingCLI()
+    cli = RecordingCLI({
+        "susb active 1000": "Active (command) Simple USB Radio device set to [1000]",
+        "susb show settings": "Active radio interface is [1000]\nRx Level currently set to 500",
+    })
     driver = SimpleUSBOperations(cli)
 
     driver.list_devices()
@@ -43,7 +46,10 @@ def test_simpleusb_handlers_use_driver_commands_and_fixed_response_shape():
 
 
 def test_usbradio_handlers_use_real_read_and_reload_commands():
-    cli = RecordingCLI()
+    cli = RecordingCLI({
+        "radio active 1002": "Active (command) USB Radio device set to [1002]",
+        "radio show settings": "Active radio interface is [1002]\nRx Level currently set to 500",
+    })
     driver = USBRadioOperations(cli)
 
     driver.list_devices()
@@ -65,6 +71,7 @@ def test_usbradio_handlers_use_real_read_and_reload_commands():
 
 def test_usbradio_signal_query_is_read_only_and_returns_driver_feedback():
     cli = RecordingCLI({
+        "radio active 1002": "Active (command) USB Radio device set to [1002]",
         "radio tune rxsquelch": (
             "Current Signal Strength is 432\nCurrent Squelch setting is 500"
         )
@@ -169,6 +176,52 @@ def test_rejected_device_selection_stops_before_read_or_tuning():
             else:
                 raise AssertionError("a rejected device selection was allowed to continue")
         assert cli.commands == [command, command]
+
+
+def test_unconfirmed_or_mismatched_active_selection_stops_the_operation():
+    for driver, command, tuning_setting in (
+        (SimpleUSBOperations, "susb active 1998", "rx"),
+        (USBRadioOperations, "radio active 1998", "rxsquelch"),
+    ):
+        for response in ("", "ok", "Active (command) Radio device set to [1999]"):
+            cli = RecordingCLI({command: response})
+            operation = driver(cli)
+            context = OperationContext(1998, "1998")
+            try:
+                operation.read_settings(context)
+            except OperationError as error:
+                assert "did not confirm" in str(error) or "instead of [1998]" in str(error)
+            else:
+                raise AssertionError("an unconfirmed device selection was treated as success")
+            assert cli.commands == [command]
+
+            cli = RecordingCLI({command: response})
+            operation = driver(cli)
+            try:
+                operation.set_value(context, tuning_setting, 500)
+            except OperationError:
+                pass
+            else:
+                raise AssertionError("tuning continued after an unconfirmed device selection")
+            assert cli.commands == [command]
+
+
+def test_settings_read_must_identify_the_requested_active_device():
+    cli = RecordingCLI({
+        "susb active 1998": "Active (command) Simple USB Radio device set to [1998]",
+        "susb show settings": (
+            "Active radio interface is [1999]\nDevice String is 2-1:1.0\nCard is 0"
+        ),
+    })
+    operation = SimpleUSBOperations(cli)
+
+    try:
+        operation.read_settings(OperationContext(1998, "1998"))
+    except OperationError as error:
+        assert "settings for interface [1999]" in str(error)
+    else:
+        raise AssertionError("settings from a different active device were accepted")
+    assert cli.commands == ["susb active 1998", "susb show settings"]
 
 
 def test_demo_driver_reload_restores_only_that_drivers_initial_mock_values():

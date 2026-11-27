@@ -17,6 +17,10 @@ COMMAND_TIMEOUT_SECONDS = 10
 GREETING_LIMIT_BYTES = 1024
 DEVICE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 COMMAND_PREFIX = b"cli quit after "
+CLI_ERROR_PREFIX = re.compile(
+    r"^(?:error\b|failed\b|unable\b|invalid\b|unknown\b|usage:|no such command\b|no device\s*\[)",
+    re.IGNORECASE,
+)
 
 
 class OperationError(ValueError):
@@ -54,7 +58,9 @@ class LiveOperation(ABC):
     def reload_driver(self) -> str:
         """Reload only the registered channel driver module."""
         result = self.cli.run(f"module reload {self.module_name}")
-        if any(marker in result.lower() for marker in ("reload failed", "unable to reload", "no such module")):
+        if CLI_ERROR_PREFIX.match(result) or any(marker in result.lower() for marker in (
+            "reload failed", "unable to reload", "no such module",
+        )):
             raise OperationError(result)
         return result
 
@@ -93,15 +99,24 @@ class AsteriskSocket:
                 ) from exc
             if exc.errno == errno.ENOENT:
                 raise OperationError(
-                    f"Asterisk control socket was not found at {self.socket_path}. "
-                    "Set paths.asterisk_socket to the active Asterisk socket and restart the web service."
+                    "Asterisk control socket was not found. Set paths.asterisk_socket to the active "
+                    "socket and restart the web service."
                 ) from exc
-            raise OperationError(f"Could not connect to the Asterisk control socket: {exc}") from exc
+            if exc.errno == errno.ECONNREFUSED:
+                raise OperationError(
+                    "Asterisk control socket refused the connection. Check that Asterisk and its "
+                    "socket listener are running, then retry."
+                ) from exc
+            raise OperationError(
+                f"Could not communicate with the Asterisk control socket (OS error {exc.errno})."
+            ) from exc
         finally:
             client.close()
 
         message = output.decode("utf-8", errors="replace").strip()
-        if "no such command" in message.lower():
+        if not message:
+            raise OperationError("Asterisk returned an empty response. Confirm the operation is supported and retry.")
+        if CLI_ERROR_PREFIX.match(message):
             raise OperationError(message)
         return message
 
@@ -143,7 +158,46 @@ def validate_node_number(value: object) -> int:
     return value
 
 
-def validate_device(value: str) -> str:
-    if not DEVICE_NAME.fullmatch(value):
+def validate_device(value: object) -> str:
+    if not isinstance(value, str) or not DEVICE_NAME.fullmatch(value):
         raise OperationError("The configured USB device name contains unsupported characters.")
     return value
+
+
+def confirm_active_device(response: str, device: str, driver: str) -> None:
+    """Stop if Asterisk did not confirm the requested interface is active."""
+    message = response.strip()
+    if CLI_ERROR_PREFIX.match(message):
+        raise OperationError(message)
+    match = re.search(r"\bactive\b[^\r\n]*\[([^\]]+)\]", message, re.IGNORECASE)
+    if match is None:
+        raise OperationError(
+            f"Asterisk did not confirm that the {driver} interface [{device}] became active; "
+            "no follow-up command was sent."
+        )
+    active_device = match.group(1).strip()
+    if active_device != device:
+        raise OperationError(
+            f"Asterisk activated {driver} interface [{active_device}] instead of [{device}]; "
+            "no follow-up command was sent."
+        )
+
+
+def confirm_settings_device(response: str, device: str, driver: str) -> None:
+    """Ensure a settings read belongs to the interface selected for this task."""
+    match = re.search(
+        r"^\s*Active radio interface is \[([^\]]+)\]\s*$",
+        response,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if match is None:
+        raise OperationError(
+            f"Asterisk did not identify the active {driver} interface in its settings response. "
+            "Check that the driver is loaded and the device is assigned to this Node Number."
+        )
+    active_device = match.group(1).strip()
+    if active_device != device:
+        raise OperationError(
+            f"Asterisk returned {driver} settings for interface [{active_device}] while "
+            f"[{device}] was requested. No settings were accepted."
+        )

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .base import LiveOperation, OperationContext, OperationError, validate_device
+from .base import (
+    LiveOperation,
+    OperationContext,
+    OperationError,
+    confirm_active_device,
+    confirm_settings_device,
+    validate_device,
+)
 
 
 class SimpleUSBOperations(LiveOperation):
@@ -12,10 +19,7 @@ class SimpleUSBOperations(LiveOperation):
 
     def _select_device(self, device: str) -> None:
         result = self.cli.run(f"susb active {device}")
-        if any(marker in result.lower() for marker in (
-            "no device [", "device not found", "does not exist", "no such device",
-        )):
-            raise OperationError(result or "Asterisk rejected the configured device selection.")
+        confirm_active_device(result, device, "SimpleUSB")
 
     def list_devices(self) -> str:
         # `show` lists every device known to the channel driver, including
@@ -25,7 +29,9 @@ class SimpleUSBOperations(LiveOperation):
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)
         self._select_device(device)
-        return self.cli.run("susb show settings")
+        result = self.cli.run("susb show settings")
+        confirm_settings_device(result, device, "SimpleUSB")
+        return result
 
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
         if setting not in self.tuning_fields:

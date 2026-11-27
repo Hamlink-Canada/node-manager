@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .base import LiveOperation, OperationContext, OperationError, validate_device
+from .base import (
+    LiveOperation,
+    OperationContext,
+    OperationError,
+    confirm_active_device,
+    confirm_settings_device,
+    validate_device,
+)
 
 
 class USBRadioOperations(LiveOperation):
@@ -18,10 +25,7 @@ class USBRadioOperations(LiveOperation):
 
     def _select_device(self, device: str) -> None:
         result = self.cli.run(f"radio active {device}")
-        if any(marker in result.lower() for marker in (
-            "no device [", "device not found", "does not exist", "no such device",
-        )):
-            raise OperationError(result or "Asterisk rejected the configured device selection.")
+        confirm_active_device(result, device, "USBRadio")
 
     def list_devices(self) -> str:
         return self.cli.run("radio active show")
@@ -30,6 +34,7 @@ class USBRadioOperations(LiveOperation):
         device = validate_device(context.device)
         self._select_device(device)
         settings = self.cli.run("radio show settings")
+        confirm_settings_device(settings, device, "USBRadio")
         # `radio show settings` omits the configurable soft-limiter setpoint;
         # the no-argument query is read-only and reports its current value.
         limiter = self.cli.run("radio tune txslimsp")
