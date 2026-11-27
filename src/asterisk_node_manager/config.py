@@ -1,4 +1,4 @@
-"""Dynaconf-backed runtime settings and compatibility adapters."""
+"""Dynaconf-backed runtime settings."""
 
 from __future__ import annotations
 
@@ -26,23 +26,6 @@ DEFAULTS = {
         "demo_mode": False,
     },
 }
-
-# Retain the environment names used by the initial releases. New nested
-# Dynaconf variables such as ASTNODE_PATHS__DATABASE are also supported.
-LEGACY_ENVIRONMENT_KEYS = {
-    "ASTNODE_DATABASE": ("paths", "database"),
-    "ASTNODE_ASTERISK_DIRECTORY": ("paths", "asterisk_directory"),
-    "ASTNODE_WRITER_SOCKET": ("paths", "writer_socket"),
-    "ASTNODE_WRITER_ALLOWLIST": ("paths", "writer_allowlist"),
-    "ASTNODE_ASTERISK_CLI": ("paths", "asterisk_cli"),
-    "ASTNODE_DEMO_OUTPUT_DIRECTORY": ("paths", "demo_output_directory"),
-    "ASTNODE_LISTEN_ADDRESS": ("web", "listen_address"),
-    "ASTNODE_PORT": ("web", "port"),
-    "ASTNODE_PAM_SERVICE": ("web", "pam_service"),
-    "ASTNODE_SECRET_KEY_FILE": ("web", "secret_key_file"),
-    "ASTNODE_DEMO": ("web", "demo_mode"),
-}
-
 
 @dataclass(frozen=True)
 class Settings:
@@ -80,13 +63,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
     if config_path.is_file():
         settings.load_file(path=str(config_path))
 
-    # Match the other Hamlink services: defaults first, file values second,
-    # environment overrides last. Keep the original flat environment names
-    # working while allowing Dynaconf's nested __ syntax for new deployments.
+    # Defaults first, file values second, environment overrides last.
     env_loader.load(settings, env="ASTNODE")
-    for environment_key, (section, key) in LEGACY_ENVIRONMENT_KEYS.items():
-        if environment_key in os.environ:
-            settings.update({section: {key: os.environ[environment_key]}}, merge=True)
 
     demo_mode = _as_bool(settings.WEB.DEMO_MODE, "web.demo_mode")
     if demo_mode:

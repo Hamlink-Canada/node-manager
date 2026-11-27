@@ -26,8 +26,7 @@ source checkout defaults to ./node-manager.toml. The default database location
 is /var/lib/asterisk-node-manager/manager.sqlite3 in a system installation.
 Dynaconf reads built-in defaults, then that TOML file, then ASTNODE-prefixed
 environment variables. Nested variables use double underscores, for example
-ASTNODE_PATHS__DATABASE and ASTNODE_WEB__PORT. The original flat names such as
-ASTNODE_DATABASE and ASTNODE_PORT remain supported. Set ASTNODE_CONFIG to
+ASTNODE_PATHS__DATABASE and ASTNODE_WEB__PORT. Set ASTNODE_CONFIG to
 select an explicit TOML file; if that file does not exist, startup fails.
 
 The web service binds to 127.0.0.1:8765 by default. Web access uses the host

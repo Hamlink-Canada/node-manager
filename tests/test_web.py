@@ -409,8 +409,8 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
 
 def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exist(monkeypatch, tmp_path):
     from asterisk_node_manager.config import load_settings
-    monkeypatch.setenv("ASTNODE_DEMO", "yes")
-    monkeypatch.delenv("ASTNODE_DATABASE", raising=False)
+    monkeypatch.setenv("ASTNODE_WEB__DEMO_MODE", "yes")
+    monkeypatch.delenv("ASTNODE_PATHS__DATABASE", raising=False)
     monkeypatch.delenv("ASTNODE_CONFIG", raising=False)
     settings = load_settings()
     assert settings.demo_mode is True
@@ -419,7 +419,7 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
     configured_database = tmp_path / "production.sqlite3"
     config = tmp_path / "demo.toml"
     config.write_text(f'[paths]\ndatabase = "{configured_database}"\n')
-    monkeypatch.setenv("ASTNODE_DATABASE", str(configured_database))
+    monkeypatch.setenv("ASTNODE_PATHS__DATABASE", str(configured_database))
     assert load_settings(config).database == ":memory:"
     assert not configured_database.exists()
 
