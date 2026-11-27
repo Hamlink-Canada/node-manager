@@ -55,6 +55,13 @@ class LiveTaskQueue:
                 "auxvoice": 500, "txslimsp": 9000,
             },
         }
+        self._demo_driver_defaults = {
+            "simpleusb": {"rx": 500, "txa": 500, "txb": 500},
+            "usbradio": {
+                "rxlevel": 500, "rxsquelch": 500, "txvoice": 500, "txtone": 200,
+                "auxvoice": 500, "txslimsp": 9000,
+            },
+        }
         self._demo_values = {key: value.copy() for key, value in self._demo_defaults.items()}
         self._thread = threading.Thread(target=self._work, name="asterisk-live-operations", daemon=True)
         self._thread.start()
@@ -164,17 +171,16 @@ class LiveTaskQueue:
                 )}
             return {"output": "Device [1002] is assigned to device=hw:3,0 card=3"}
         if task.operation == "reload_driver":
-            self._demo_values.update({
-                key: value.copy() for key, value in self._demo_defaults.items()
-                if key[0] == task.driver
-            })
+            for key in list(self._demo_values):
+                if key[0] == task.driver:
+                    self._demo_values[key] = self._initial_demo_values(task.driver, key[1])
             module = "chan_simpleusb.so" if task.driver == "simpleusb" else "chan_usbradio.so"
             return {"output": f"Module '{module}' reloaded successfully."}
         device_key = task.device or str(task.node_number or "1000")
-        values = self._demo_values.setdefault(
-            (task.driver, device_key),
-            self._demo_defaults.get((task.driver, device_key), {}).copy(),
-        )
+        state_key = (task.driver, device_key)
+        if state_key not in self._demo_values:
+            self._demo_values[state_key] = self._initial_demo_values(task.driver, device_key)
+        values = self._demo_values[state_key]
         if task.operation == "read_settings":
             if task.driver == "simpleusb":
                 return {"output": (
@@ -232,6 +238,15 @@ class LiveTaskQueue:
             "txslimsp": f"Current tx limiter setpoint: {task.value}",
         }
         return {"output": outputs[setting]}
+
+    def _initial_demo_values(self, driver: str, device: str) -> dict[str, int]:
+        """Return a complete per-device baseline for a demo driver."""
+        values = self._demo_defaults.get((driver, device))
+        if values is None:
+            values = self._demo_driver_defaults.get(driver)
+        if values is None:
+            raise OperationError(f"No demo operations are available for driver {driver}.")
+        return values.copy()
 
     def submit_query(self, actor: str, query: str) -> dict:
         """Queue a named read-only Asterisk query for the existing task pipeline."""

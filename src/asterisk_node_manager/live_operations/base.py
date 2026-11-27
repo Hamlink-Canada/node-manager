@@ -161,6 +161,10 @@ def validate_node_number(value: object) -> int:
 def validate_device(value: object) -> str:
     if not isinstance(value, str) or not DEVICE_NAME.fullmatch(value):
         raise OperationError("The configured USB device name contains unsupported characters.")
+    if value.lower() == "show":
+        raise OperationError(
+            "The device name 'show' is reserved by the Asterisk CLI. Rename the configured device."
+        )
     return value
 
 

@@ -12,7 +12,7 @@ QUERY_COMMANDS = {
     "uptime": "core show uptime",
     "channels": "core show channels",
     "iax_peers": "iax2 show peers",
-    "rpt_nodes": "rpt show nodes",
+    "rpt_nodes": "rpt localnodes",
     "modules": "module show",
 }
 

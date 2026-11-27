@@ -14,7 +14,7 @@ from asterisk_node_manager.database import (
 from asterisk_node_manager.migrate import upgrade_database
 from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, CustomValue, Network,
                                           Node, Setting, SimpleUSBSettings, USBRadioSettings)
-from asterisk_node_manager.web import create_app
+from asterisk_node_manager.web import _demo_diagnostic, create_app
 
 
 def _dispose(sessions, database):
@@ -33,6 +33,11 @@ def _network_profile(key, name, **overrides):
     }
     profile.update(overrides)
     return profile
+
+
+def test_demo_diagnostics_use_registered_rpt_localnodes_command():
+    assert "Node 1000" in _demo_diagnostic("rpt localnodes")
+    assert "No demonstration output" in _demo_diagnostic("rpt show nodes")
 
 
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):

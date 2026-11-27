@@ -224,6 +224,25 @@ def test_settings_read_must_identify_the_requested_active_device():
     assert cli.commands == ["susb active 1998", "susb show settings"]
 
 
+def test_reserved_show_device_name_is_rejected_before_any_cli_command():
+    for driver, setting in (
+        (SimpleUSBOperations, "rx"),
+        (USBRadioOperations, "rxsquelch"),
+    ):
+        cli = RecordingCLI()
+        operation = driver(cli)
+        context = OperationContext(1998, "SHOW")
+        for action in (lambda: operation.read_settings(context),
+                       lambda: operation.set_value(context, setting, 500)):
+            try:
+                action()
+            except OperationError as error:
+                assert "reserved" in str(error)
+            else:
+                raise AssertionError("the reserved device name was accepted")
+        assert cli.commands == []
+
+
 def test_demo_driver_reload_restores_only_that_drivers_initial_mock_values():
     tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
     radio_tune = TaskRequest("a" * 32, "demo", "usbradio", "set_value", 1002,
@@ -242,9 +261,32 @@ def test_demo_driver_reload_restores_only_that_drivers_initial_mock_values():
         "e" * 32, "demo", "simpleusb", "read_settings", 1000, "1000", None, None))["output"]
 
 
+def test_unseeded_demo_device_gets_complete_settings_and_resets_on_reload():
+    tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
+    tune = TaskRequest("a" * 32, "demo", "simpleusb", "set_value", 1998,
+                       "usbB", "rx", 612)
+    read = TaskRequest("b" * 32, "demo", "simpleusb", "read_settings", 1998,
+                       "usbB", None, None)
+    reload_task = TaskRequest("c" * 32, "demo", "simpleusb", "reload_driver", None,
+                              None, None, None)
+
+    assert tasks._mock(tune)["output"] == "Changed setting on RX Channel to 612"
+    changed = tasks._mock(read)["output"]
+    assert "Rx Level currently set to 612" in changed
+    assert "Tx A Level currently set to 500" in changed
+    assert "Tx B Level currently set to 500" in changed
+
+    tasks._mock(reload_task)
+    reset = tasks._mock(read)["output"]
+    assert "Rx Level currently set to 500" in reset
+    assert "Tx A Level currently set to 500" in reset
+    assert "Tx B Level currently set to 500" in reset
+
+
 def test_named_asterisk_queries_are_fixed_and_read_only():
     cli = RecordingCLI()
 
+    assert QUERY_COMMANDS["rpt_nodes"] == "rpt localnodes"
     for query, command in QUERY_COMMANDS.items():
         assert query_asterisk(cli, query) == "ok"
 

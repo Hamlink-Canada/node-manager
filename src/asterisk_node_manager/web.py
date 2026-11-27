@@ -42,6 +42,7 @@ from .networks import (NETWORK_DEFAULTS, NETWORK_FIELD_DEFINITIONS, load_network
                        network_fields, network_overrides, parse_network_profile)
 from . import __version__
 from .live_operations.base import AsteriskSocket, OperationError
+from .live_operations.queries import QUERY_COMMANDS, query_demo_asterisk
 from .live_operations.registry import operation_names
 from .live_operations.tasks import LiveTaskQueue
 from .configuration import (
@@ -666,8 +667,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.route("/diagnostics", methods=["GET", "POST"])
     @login_required
     def diagnostics():
-        choices = ("core show version", "core show uptime", "core show channels",
-                   "iax2 show peers", "rpt show nodes", "module show")
+        choices = tuple(QUERY_COMMANDS.values())
         output = None
         selected = None
         error = None
@@ -908,25 +908,19 @@ def _request_authentication(settings: Settings, username: str, password: str) ->
 
 
 def _request_diagnostic(settings: Settings, command: str) -> str:
-    if settings.demo_mode:
-        return _demo_diagnostic(command)
-    allowed = {"core show version", "core show uptime", "core show channels",
-               "iax2 show peers", "rpt show nodes", "module show"}
-    if command not in allowed:
+    query = next((name for name, registered in QUERY_COMMANDS.items() if registered == command), None)
+    if query is None:
         raise OperationError("Diagnostic command is not allowed.")
+    if settings.demo_mode:
+        return query_demo_asterisk(query)
     return AsteriskSocket(settings.asterisk_socket).run(command)
 
 
 def _demo_diagnostic(command: str) -> str:
-    examples = {
-        "core show version": "Asterisk 20.7.0-demo built for demonstration\n",
-        "core show uptime": "System uptime: 2 hours, 14 minutes\nLast reload: 18 minutes ago\n",
-        "core show channels": "Channel              Location             State   Application\n0 active channels\n",
-        "iax2 show peers": "Name/Username    Host             State\nDemoPeer         192.0.2.25       OK\n",
-        "rpt show nodes": "Node 1000: Demo Node North\nNode 1001: Demo Node South\n",
-        "module show": "Module                         Description\napp_rpt.so                     Radio Repeater\n",
-    }
-    return examples.get(command, "No demonstration output for this command.\n")
+    query = next((name for name, registered in QUERY_COMMANDS.items() if registered == command), None)
+    if query is None:
+        return "No demonstration output for this command.\n"
+    return query_demo_asterisk(query)
 
 
 def _write_demo_files(directory: Path, files: dict[str, bytes]) -> None:
