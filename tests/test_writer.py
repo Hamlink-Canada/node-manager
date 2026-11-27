@@ -22,6 +22,10 @@ def test_writer_rejects_invalid_json_and_unsupported_operations(tmp_path):
     assert writer.handle_request(_request({"operation": []}), settings) == {
         "ok": False, "error": "unsupported operation"
     }
+    deeply_nested_json = b"[" * 10_000 + b"0" + b"]" * 10_000
+    assert writer.handle_request(deeply_nested_json, settings) == {
+        "ok": False, "error": "invalid JSON request"
+    }
 
 
 def test_writer_response_reader_handles_large_replies_and_rejects_empty_reply():

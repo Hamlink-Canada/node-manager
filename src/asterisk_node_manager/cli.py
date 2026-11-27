@@ -5,13 +5,14 @@ from __future__ import annotations
 import argparse
 import os
 import grp
+import pwd
 import sqlite3
 import tempfile
 import sys
 from pathlib import Path
 
 from .config import load_settings
-from .database import session_factory, sqlite_snapshot
+from .database import database_write_lock, session_factory, sqlite_snapshot
 from .asterisk_config import is_secret_key, parse_config
 from .migrate import upgrade_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings
@@ -88,8 +89,21 @@ def main() -> int:
                 source.backup(target)
             if previous is not None:
                 current_stat = settings.database.stat()
-                os.chmod(restored, current_stat.st_mode & 0o777)
-                os.chown(restored, current_stat.st_uid, current_stat.st_gid)
+                try:
+                    os.chown(restored, current_stat.st_uid, current_stat.st_gid)
+                except PermissionError:
+                    pass
+                else:
+                    os.chmod(restored, current_stat.st_mode & 0o777)
+            else:
+                try:
+                    database_uid = pwd.getpwnam("asterisk-node-manager").pw_uid
+                    database_gid = grp.getgrnam("asterisk-node-manager").gr_gid
+                except KeyError:
+                    os.chmod(restored, 0o640)
+                else:
+                    os.chown(restored, database_uid, database_gid)
+                    os.chmod(restored, 0o640)
             os.replace(restored, settings.database)
             upgrade_database(settings.database)
             from .generate import render_database
@@ -133,6 +147,9 @@ def main() -> int:
         print(f"Updated web writer allowlist: {settings.writer_allowlist}")
         return 0
     if args.command == "import":
+        if args.commit:
+            with database_write_lock(settings.database):
+                return _import_config(args.config_directory, args.commit, settings)
         return _import_config(args.config_directory, args.commit, settings)
     return 2
 

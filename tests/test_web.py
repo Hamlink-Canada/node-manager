@@ -4,14 +4,19 @@ import json
 import pytest
 
 from asterisk_node_manager.config import Settings
-from asterisk_node_manager.database import session_factory
+from asterisk_node_manager.database import is_memory_database, session_factory
 from asterisk_node_manager.migrate import upgrade_database
 from asterisk_node_manager.models import ConfigValue, CustomLine, Network, Node, Setting
 from asterisk_node_manager.web import create_app
 
 
+def _dispose(sessions, database):
+    if not is_memory_database(database):
+        sessions.kw["bind"].dispose()
+
+
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):
-    settings = Settings(database=tmp_path / "demo.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated", writer_socket=tmp_path / "absent.sock")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -39,7 +44,7 @@ def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_p
         assert "duplex = 0" in generated_rpt
         assert "rxboost = no" in (settings.demo_output_directory / "simpleusb.conf").read_text()
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_non_demo_routes_require_login_and_writers_file(tmp_path):
@@ -63,7 +68,7 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
 
 
 def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path):
-    settings = Settings(database=tmp_path / "wizard.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -113,11 +118,11 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
             assert hub_node.duplex == 0
             assert hub_node.simpleusb_settings is None
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_path):
-    settings = Settings(database=tmp_path / "wizard-duplicate.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -138,11 +143,11 @@ def test_guided_node_setup_rejects_duplicate_node_id_without_changing_it(tmp_pat
         with sessions() as session:
             assert session.query(Node).filter_by(node_number=1000).count() == 1
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
-    settings = Settings(database=tmp_path / "networks.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -180,11 +185,11 @@ def test_network_profile_upload_validates_and_updates_by_stable_key(tmp_path):
             assert network.config == {"register": False}
             assert session.query(Network).filter_by(stable_key="allstarlink").count() == 1
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_web_database_backup_and_restore_reverts_later_changes(tmp_path):
-    settings = Settings(database=tmp_path / "backup.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -198,7 +203,7 @@ def test_web_database_backup_and_restore_reverts_later_changes(tmp_path):
     try:
         with sessions.begin() as session:
             session.add(Node(node_number=9090, name="Temporary node"))
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
         restored = client.post("/restore", data={
             "database": (BytesIO(backup_bytes), "backup.sqlite3")
         }, content_type="multipart/form-data")
@@ -207,13 +212,13 @@ def test_web_database_backup_and_restore_reverts_later_changes(tmp_path):
         with restored_sessions() as session:
             assert session.query(Node).filter_by(node_number=9090).count() == 0
             assert session.query(Node).filter_by(node_number=1000).count() == 1
-        restored_sessions.kw["bind"].dispose()
+        _dispose(restored_sessions, settings.database)
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_demo_memory_database_supports_download_and_restore(tmp_path):
-    settings = Settings(database=":memory:", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -235,7 +240,7 @@ def test_demo_memory_database_supports_download_and_restore(tmp_path):
 
 
 def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path):
-    settings = Settings(database=tmp_path / "editor.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -260,11 +265,11 @@ def test_advanced_simpleusb_file_editor_saves_known_and_unknown_fields(tmp_path)
                 file_name="simpleusb.conf", section="1000", key="customdriveroption").one()
             assert custom.value == "kept"
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_editor_rejects_text_that_differs_from_preview(tmp_path):
-    settings = Settings(database=tmp_path / "editor-stale.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -278,7 +283,7 @@ def test_editor_rejects_text_that_differs_from_preview(tmp_path):
 
 
 def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
-    settings = Settings(database=tmp_path / "iax-secret.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -289,11 +294,14 @@ def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
         with sessions.begin() as session:
             session.add(CustomLine(file_name="iax.conf", section="general", line_number=0,
                                    content="register => demo:secret@host.invalid"))
-        sessions.kw["bind"].dispose()
+            session.add(CustomLine(file_name="iax.conf", section="general", line_number=1,
+                                   content="register => demo:other@host.invalid"))
+        _dispose(sessions, settings.database)
         page = client.get("/files/iax.conf")
         assert b"register =&gt; [hidden]" in page.data
         assert b"secret@host.invalid" not in page.data
-        content = "[general]\nregister => [hidden]\n"
+        content = ("[general]\n; added comment\nregister => [hidden]\n\n"
+                   "; comment between registrations\nregister => [hidden]\n")
         preview = client.post("/files/iax.conf", data={"action": "preview", "content": content})
         assert preview.status_code == 200
         saved = client.post("/files/iax.conf", data={
@@ -303,24 +311,33 @@ def test_iax_register_credentials_are_masked_and_preserved_on_save(tmp_path):
         assert saved.status_code == 302
         generated = (settings.demo_output_directory / "iax.conf").read_text()
         assert "register => demo:secret@host.invalid" in generated
+        assert "register => demo:other@host.invalid" in generated
+        unresolved = "[general]\nregister => [hidden]\nregister => [hidden]\nregister => [hidden]\n"
+        preview = client.post("/files/iax.conf", data={"action": "preview", "content": unresolved})
+        assert preview.status_code == 200
+        response = client.post("/files/iax.conf", data={
+            "action": "commit", "confirmed": "yes", "content": unresolved,
+            "preview_hash": hashlib.sha256(unresolved.encode()).hexdigest(),
+        })
+        assert response.status_code == 400
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_login_ignores_external_redirect_and_rejects_oversized_node_number(tmp_path):
-    settings = Settings(database=tmp_path / "redirect.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
     client = app.test_client()
     login = client.post("/login?next=https://example.invalid/", follow_redirects=False)
-    assert login.headers["Location"].endswith("/")
+    assert login.headers["Location"] == "/"
     response = client.post("/nodes", data={"node_number": "9223372036854775808", "name": "Too large"})
     assert response.status_code == 400
 
 
 def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tmp_path):
-    settings = Settings(database=tmp_path / "network-selection.sqlite3", demo_mode=True,
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated")
     app = create_app(settings)
     app.config.update(TESTING=True)
@@ -336,7 +353,7 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
             assert session.get(Setting, "advanced_node_networks").value == "true"
         with sessions.begin() as session:
             session.add(Node(node_number=9044, name="Read-only target"))
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
         with client.session_transaction() as browser_session:
             browser_session["username"] = "reader"
         page = client.get("/")
@@ -345,7 +362,7 @@ def test_network_selection_setting_saves_true_value_and_readonly_page_is_safe(tm
         assert b"Download backup" not in page.data
         assert b"assign_network" not in page.data
     finally:
-        sessions.kw["bind"].dispose()
+        _dispose(sessions, settings.database)
 
 
 def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exist(monkeypatch, tmp_path):
@@ -365,12 +382,10 @@ def test_demo_settings_choose_an_isolated_database_and_explicit_config_must_exis
     assert not configured_database.exists()
 
     from asterisk_node_manager.config import Settings
-    try:
-        create_app(Settings(demo_mode=True, secret_key_file=tmp_path / "missing-secret"))
-    except ValueError as exc:
-        assert "separate database" in str(exc)
-    else:
-        raise AssertionError("demo mode accepted the production database path")
+    for database_path in (Settings.database, configured_database):
+        with pytest.raises(ValueError, match="in-memory database"):
+            create_app(Settings(database=database_path, demo_mode=True,
+                                secret_key_file=tmp_path / "missing-secret"))
 
     with pytest.raises(FileNotFoundError):
         load_settings(tmp_path / "missing-explicit-config.toml")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,15 @@ GENERATED_FILES = ("rpt.conf", "iax.conf", "extensions.conf", "modules.conf",
                    "manager.conf", "echolink.conf", "usbradio.conf",
                    "simpleusb.conf", "voter.conf", "savenode.conf",
                    "rpt_http_registrations.conf")
+
+
+def section_header(section: str) -> str:
+    """Render a section name with Asterisk inheritance/template suffix syntax."""
+    match = re.fullmatch(r"(.*?)(\([^()]*\))?", section)
+    if match is None:
+        return f"[{section}]"
+    name, suffix = match.groups()
+    return f"[{name}]{suffix or ''}"
 
 
 def render_database(database: str | Path) -> dict[str, bytes]:
@@ -68,7 +78,8 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                 content = templates.get_template(template_name).render(
                     nodes=nodes_context,
                     values=[value for value in values if not value.section.isdigit()],
-                    custom_lines=[line for line in custom if not line.section.isdigit()])
+                    custom_lines=[line for line in custom if not line.section.isdigit()],
+                    section_header=section_header)
             else:
                 if filename == "simpleusb.conf":
                     values = [value for value in values
@@ -77,7 +88,8 @@ def render_database(database: str | Path) -> dict[str, bytes]:
                     values.sort(key=lambda value: (value.section, value.key))
                 content = templates.get_template("generic.conf.j2").render(
                     filename=filename, values=values, custom_lines=custom,
-                    sections=sorted({row.section for row in values + custom}))
+                    sections=sorted({row.section for row in values + custom}),
+                    section_header=section_header)
             output[filename] = content.encode("utf-8")
     return output
 

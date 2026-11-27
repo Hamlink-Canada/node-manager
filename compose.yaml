@@ -1,6 +1,9 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-1000}
     image: asterisk-node-manager:local
     command: ["astnode-web"]
     environment:
@@ -20,7 +23,10 @@ services:
 
   writer:
     image: asterisk-node-manager:local
-    build: .
+    build:
+      context: .
+      args:
+        ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-1000}
     command: ["astnode-writer"]
     user: root
     environment:

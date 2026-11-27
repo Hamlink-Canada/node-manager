@@ -10,6 +10,8 @@ RUN python -m pip wheel --wheel-dir /wheels .
 
 FROM python:3.11-slim-bookworm
 
+ARG ASTNODE_ASTERISK_GID=1000
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ASTNODE_DATABASE=/var/lib/asterisk-node-manager/manager.sqlite3 \
@@ -21,9 +23,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     ASTNODE_PORT=8765
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpam0g util-linux \
+    ca-certificates wget libpam0g util-linux \
+    && wget -q -O /tmp/asl-apt-repos.deb https://repo.allstarlink.org/public/asl-apt-repos.deb12_all.deb \
+    && dpkg -i /tmp/asl-apt-repos.deb \
+    && rm /tmp/asl-apt-repos.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends asl3-asterisk \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system asterisk \
+    && (getent group asterisk >/dev/null || groupadd --gid "$ASTNODE_ASTERISK_GID" asterisk) \
+    && groupmod --non-unique --gid "$ASTNODE_ASTERISK_GID" asterisk \
     && groupadd --system asterisk-node-manager \
     && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager \
        --home-dir /nonexistent --no-create-home asterisk-node-manager \

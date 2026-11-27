@@ -14,6 +14,7 @@ import pam
 from pathlib import Path
 
 from .config import load_settings
+from .database import database_exists
 from .generate import render_database
 
 ALLOWED_OPERATIONS = {"generate", "diagnostic", "authenticate"}
@@ -26,7 +27,7 @@ DIAGNOSTIC_COMMANDS = {
 def handle_request(request: bytes, settings) -> dict:
     try:
         payload = json.loads(request.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         return {"ok": False, "error": "invalid JSON request"}
     if (not isinstance(payload, dict) or not isinstance(payload.get("operation"), str)
             or payload.get("operation") not in ALLOWED_OPERATIONS):
@@ -125,7 +126,7 @@ def main() -> int:
     server, owns_socket_path = _open_server_socket(settings)
     try:
         # Reconcile interrupted publication before serving clients when a database exists.
-        if settings.database.is_file():
+        if not settings.demo_mode and database_exists(settings.database):
             _replace_files(settings.asterisk_directory, render_database(settings.database))
         while True:
             connection, _ = server.accept()
@@ -135,7 +136,7 @@ def main() -> int:
                     request = _read_request(connection)
                     response = handle_request(request, settings)
                     connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
-                except (OSError, ValueError, TypeError):
+                except (OSError, ValueError, TypeError, RecursionError):
                     # One malformed or abandoned client must not stop the listener.
                     continue
     finally:

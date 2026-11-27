@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import fcntl
 import sqlite3
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine, event
@@ -63,6 +65,37 @@ def dispose_database_engine(database: str | Path) -> None:
         create_database_engine(database).dispose()
 
 
+def acquire_database_write_lock(database: str | Path) -> int | None:
+    """Acquire an interprocess lock for file-backed database mutations."""
+    if is_memory_database(database):
+        return None
+    db_path = Path(database)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = db_path.with_name(db_path.name + ".lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+def release_database_write_lock(fd: int) -> None:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+@contextmanager
+def database_write_lock(database: str | Path):
+    fd = acquire_database_write_lock(database)
+    try:
+        yield
+    finally:
+        if fd is not None:
+            release_database_write_lock(fd)
+
+
 def session_factory(path: str | Path) -> sessionmaker:
     return sessionmaker(bind=create_database_engine(path), expire_on_commit=False)
 
@@ -81,19 +114,22 @@ def sqlite_snapshot(database: str | Path, directory: str | Path | None = None) -
         if database_path is None:
             engine_connection = create_database_engine(database).raw_connection()
             try:
+                dbapi_connection = (getattr(engine_connection, "driver_connection", None)
+                                    or engine_connection.connection)
                 with sqlite3.connect(snapshot) as target:
-                    engine_connection.driver_connection.backup(target)
+                    dbapi_connection.backup(target)
             finally:
                 engine_connection.close()
         else:
             with sqlite3.connect(database_path) as source, sqlite3.connect(snapshot) as target:
                 source.backup(target)
             stat_result = database_path.stat()
-            os.chmod(snapshot, stat_result.st_mode & 0o777)
             try:
                 os.chown(snapshot, stat_result.st_uid, stat_result.st_gid)
             except PermissionError:
                 pass
+            else:
+                os.chmod(snapshot, stat_result.st_mode & 0o777)
         return snapshot
     except Exception:
         snapshot.unlink(missing_ok=True)
@@ -105,8 +141,10 @@ def restore_sqlite_snapshot(database: str | Path, snapshot: str | Path) -> None:
     if is_memory_database(database):
         engine_connection = create_database_engine(database).raw_connection()
         try:
+            dbapi_connection = (getattr(engine_connection, "driver_connection", None)
+                                or engine_connection.connection)
             with sqlite3.connect(snapshot) as source:
-                source.backup(engine_connection.driver_connection)
+                source.backup(dbapi_connection)
         finally:
             engine_connection.close()
     else:

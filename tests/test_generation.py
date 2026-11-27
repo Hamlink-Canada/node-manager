@@ -1,6 +1,7 @@
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.generate import render_database
-from asterisk_node_manager.models import ConfigValue, Node, SimpleUSBSettings
+from asterisk_node_manager.asterisk_config import parse_config
+from asterisk_node_manager.models import ConfigValue, CustomLine, Node, SimpleUSBSettings
 
 
 def test_generation_renders_typed_node_and_simpleusb_settings(database):
@@ -27,3 +28,26 @@ def test_generation_renders_typed_node_and_simpleusb_settings(database):
     assert "rxmixerset = 644" in simpleusb
     assert "rxboost = yes" in simpleusb
     assert "rxmixerset = 500" not in simpleusb
+
+
+def test_inheritance_suffixes_survive_import_and_render(database):
+    sessions = session_factory(database)
+    source = "[internal](base)\nexten => 100,1,Answer()\n\n[base](!)\npriorityjumping=no\n"
+    values, lines = parse_config("extensions.conf", source)
+    try:
+        with sessions.begin() as session:
+            for section, entries in values.items():
+                for key, value in entries.items():
+                    session.add(ConfigValue(file_name="extensions.conf", section=section,
+                                            key=key, value=value, secret=False))
+            for section, entries in lines.items():
+                for index, line in enumerate(entries):
+                    session.add(CustomLine(file_name="extensions.conf", section=section,
+                                           line_number=index, content=line))
+        rendered = render_database(database)["extensions.conf"].decode()
+    finally:
+        sessions.kw["bind"].dispose()
+
+    assert "[internal](base)" in rendered
+    assert "[base](!)" in rendered
+    assert "[internal(base)]" not in rendered

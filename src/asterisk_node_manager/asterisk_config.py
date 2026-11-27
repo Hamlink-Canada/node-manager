@@ -48,7 +48,18 @@ def parse_config(filename: str, text: str) -> tuple[dict[str, dict[str, str]], d
 
 def _split_inline_comment(value: str) -> tuple[str, str | None]:
     """Split Asterisk's whitespace-delimited inline comment from an assignment."""
-    match = re.search(r"\s+[;#]", value)
-    if not match:
-        return value.strip(), None
-    return value[:match.start()].rstrip(), value[match.start():].strip()
+    quoted = False
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            quoted = not quoted
+            continue
+        if char == ";" and not quoted and index > 0 and value[index - 1].isspace():
+            return value[:index].rstrip(), value[index:].strip()
+    return value.strip(), None

@@ -44,3 +44,9 @@ def test_parser_preserves_repeated_directives_inherited_headers_and_inline_comme
     iax, directives = parse_config("iax.conf", "[general]\nregister => user:one@host\nregister => user:two@host\n")
     assert iax["general"] == {}
     assert directives["general"] == ["register => user:one@host", "register => user:two@host"]
+
+
+def test_literal_hash_in_value_is_not_an_inline_comment():
+    values, preserved = parse_config("iax.conf", '[test]\ncallerid = "Repeater #1"\n')
+    assert values == {"test": {"callerid": '"Repeater #1"'}}
+    assert preserved["test"] == []

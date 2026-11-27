@@ -21,8 +21,9 @@ from sqlalchemy import func, select
 from waitress import serve
 
 from .config import Settings, load_settings
-from .database import (database_exists, dispose_database_engine, is_memory_database,
-                       restore_sqlite_snapshot, session_factory, sqlite_snapshot)
+from .database import (acquire_database_write_lock, database_exists, dispose_database_engine,
+                       is_memory_database, release_database_write_lock, restore_sqlite_snapshot,
+                       session_factory, sqlite_snapshot)
 from .asterisk_config import SECRET_VALUE, is_secret_key, parse_config
 from .generate import GENERATED_FILES, render_database
 from .models import Change, ConfigValue, CustomLine, Network, Node, Setting, SimpleUSBSettings
@@ -44,9 +45,8 @@ from .configuration import (
 def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
     if settings.demo_mode:
-        if (not is_memory_database(settings.database)
-                and Path(settings.database).resolve() == Settings.database.resolve()):
-            raise ValueError("Demo mode must use a separate database path")
+        if not is_memory_database(settings.database):
+            raise ValueError("Demo mode requires an in-memory database")
         initialize_demo(settings.database)
         _request_generation(settings)
     app = Flask(__name__, template_folder="web/templates", static_folder="web/static")
@@ -79,12 +79,18 @@ def create_app(settings: Settings | None = None) -> Flask:
             write_lock.acquire()
             request.environ["node_manager_write_lock"] = True
             if is_mutation and current_user() in writers():
+                request.environ["node_manager_database_lock"] = acquire_database_write_lock(
+                    settings.database)
+            if is_mutation and current_user() in writers():
                 existed = is_memory_database(settings.database) or Path(settings.database).is_file()
                 request.environ["node_manager_prewrite_database"] = (
                     _sqlite_snapshot(settings.database) if existed else None, existed)
 
     @app.teardown_request
     def release_write_lock(_error=None):
+        lock_fd = request.environ.pop("node_manager_database_lock", None)
+        if lock_fd is not None:
+            release_database_write_lock(lock_fd)
         if request.environ.pop("node_manager_write_lock", False):
             write_lock.release()
 
@@ -568,7 +574,10 @@ def create_app(settings: Settings | None = None) -> Flask:
                 or request.form.get("preview_hash") != content_hash):
             abort(400, "Preview the changes and confirm the commit")
         with sessions.begin() as db:
-            _save_config_file(db, filename, values, preserved)
+            try:
+                _save_config_file(db, filename, values, preserved)
+            except ValueError as exc:
+                abort(400, str(exc))
             _record_change(db, current_user() or "", f"Updated {filename}",
                            {"record": "configuration_file", "filename": filename,
                             "settings_count": summary["settings"],
@@ -585,6 +594,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         snapshot = _sqlite_snapshot(settings.database)
         response = send_file(snapshot, as_attachment=True,
                              download_name="asterisk-node-manager.sqlite3", mimetype="application/vnd.sqlite3")
+        response.direct_passthrough = False
         response.call_on_close(lambda: snapshot.unlink(missing_ok=True))
         return response
 
@@ -614,11 +624,12 @@ def create_app(settings: Settings | None = None) -> Flask:
                 abort(400, "Backup is not a valid Asterisk Node Manager database")
             if previous is not None and database_path is not None:
                 current_stat = database_path.stat()
-                os.chmod(temp_path, current_stat.st_mode & 0o777)
                 try:
                     os.chown(temp_path, current_stat.st_uid, current_stat.st_gid)
                 except PermissionError:
                     pass
+                else:
+                    os.chmod(temp_path, current_stat.st_mode & 0o777)
             restore_sqlite_snapshot(settings.database, temp_path)
             dispose_database_engine(settings.database)
             try:
@@ -842,12 +853,16 @@ def _save_config_file(db, filename: str, values: dict, preserved: dict) -> None:
                 db.add(ConfigValue(file_name=filename, section=section, key=key, value=value,
                                    secret=is_secret_key(key)))
     for section, lines in preserved.items():
+        original_registrations = [line for line in prior_custom.get(section, [])
+                                  if re.match(r"^\s*register\s*=>", line, re.IGNORECASE)]
+        registration_index = 0
         for index, line in enumerate(lines):
-            if re.match(r"^\s*register\s*=>\s*\[hidden\]\s*$", line, re.IGNORECASE):
-                previous_lines = prior_custom.get(section, [])
-                if index < len(previous_lines) and re.match(
-                        r"^\s*register\s*=>", previous_lines[index], re.IGNORECASE):
-                    line = previous_lines[index]
+            if re.match(r"^\s*register\s*=>", line, re.IGNORECASE):
+                if re.match(r"^\s*register\s*=>\s*\[hidden\]\s*$", line, re.IGNORECASE):
+                    if registration_index >= len(original_registrations):
+                        raise ValueError("A hidden registration could not be matched to its original value")
+                    line = original_registrations[registration_index]
+                registration_index += 1
             db.add(CustomLine(file_name=filename, section=section, line_number=index, content=line))
 
 
