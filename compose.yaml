@@ -49,7 +49,6 @@ services:
     volumes:
       - manager-data:/var/lib/asterisk-node-manager
       - writer-run:/run/asterisk-node-manager
-      - /var/run/asterisk:/var/run/asterisk
       - ${ASTERISK_CONFIG_DIRECTORY:-./asterisk-config}:/etc/asterisk
       - ./network-profiles:/etc/asterisk-node-manager/networks:ro
     healthcheck:

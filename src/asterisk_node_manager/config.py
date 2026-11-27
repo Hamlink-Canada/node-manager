@@ -16,7 +16,7 @@ DEFAULTS = {
         "writer_socket": "/run/asterisk-node-manager/writer.sock",
         "writer_allowlist": "/etc/asterisk-node-manager/writers",
         "network_profiles_directory": "/etc/asterisk-node-manager/networks",
-        "asterisk_cli": "/usr/sbin/asterisk",
+        "asterisk_socket": "/var/run/asterisk/asterisk.ctl",
         "demo_output_directory": "/tmp/asterisk-node-manager-demo",
     },
     "web": {
@@ -41,7 +41,7 @@ class Settings:
     writer_socket: Path = Path(DEFAULTS["paths"]["writer_socket"])
     writer_allowlist: Path = Path(DEFAULTS["paths"]["writer_allowlist"])
     network_profiles_directory: Path = Path(DEFAULTS["paths"]["network_profiles_directory"])
-    asterisk_cli: Path = Path(DEFAULTS["paths"]["asterisk_cli"])
+    asterisk_socket: Path = Path(DEFAULTS["paths"]["asterisk_socket"])
     listen_address: str = DEFAULTS["web"]["listen_address"]
     port: int = DEFAULTS["web"]["port"]
     pam_service: str = DEFAULTS["web"]["pam_service"]
@@ -107,7 +107,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
         writer_allowlist=_path(settings.PATHS.WRITER_ALLOWLIST, "paths.writer_allowlist"),
         network_profiles_directory=_path(settings.PATHS.NETWORK_PROFILES_DIRECTORY,
                                           "paths.network_profiles_directory"),
-        asterisk_cli=_path(settings.PATHS.ASTERISK_CLI, "paths.asterisk_cli"),
+        asterisk_socket=_path(settings.PATHS.ASTERISK_SOCKET, "paths.asterisk_socket"),
         listen_address=str(settings.WEB.LISTEN_ADDRESS),
         port=port,
         pam_service=str(settings.WEB.PAM_SERVICE),

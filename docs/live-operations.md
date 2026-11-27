@@ -1,8 +1,8 @@
 # Live Asterisk operations API
 
 Live operations are available to authenticated users in the writer allowlist.
-They use the Asterisk CLI socket from the Flask worker thread; the root helper
-continues to publish generated configuration files.
+They run from the Flask worker thread; the root helper continues to publish
+generated configuration files.
 
 `GET /api/live-operations` returns the supported drivers, operations and
 tuning settings. `POST /api/live-operations` accepts a JSON object:
@@ -45,6 +45,5 @@ fields in the current web app, so saving node configuration does not persist
 those live values. All unsaved changes remain live until an Asterisk reload is
 requested, which reverts them. The manager does not request reloads.
 
-The web service account must be able to access the configured Asterisk CLI
-socket. The API reports a corrective socket permission or path error if it
-cannot connect. Demo mode uses mock data and never connects to Asterisk.
+Live operations require a running Asterisk instance with the selected radio
+driver available. Demo mode uses mock data and never connects to Asterisk.

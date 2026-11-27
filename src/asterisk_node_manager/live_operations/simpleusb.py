@@ -10,7 +10,7 @@ class SimpleUSBOperations(LiveOperation):
     tuning_fields = {"rx": (0, 999), "txa": (0, 999), "txb": (0, 999)}
 
     def list_devices(self) -> str:
-        return self.cli.run("susb active show")
+        return self.cli.run("susb active")
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)

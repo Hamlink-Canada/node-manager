@@ -16,7 +16,7 @@ class USBRadioOperations(LiveOperation):
     }
 
     def list_devices(self) -> str:
-        return self.cli.run("radio active show")
+        return self.cli.run("radio active")
 
     def read_settings(self, context: OperationContext) -> str:
         device = validate_device(context.device)

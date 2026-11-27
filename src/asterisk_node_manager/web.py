@@ -41,7 +41,7 @@ from .demo import DEMO_USERNAME, initialize_demo
 from .networks import (NETWORK_DEFAULTS, NETWORK_FIELD_DEFINITIONS, load_network_profiles,
                        network_fields, network_overrides, parse_network_profile)
 from . import __version__
-from .live_operations.base import AsteriskCLI, OperationError
+from .live_operations.base import AsteriskSocket, OperationError
 from .live_operations.registry import operation_names
 from .live_operations.tasks import LiveTaskQueue
 from .configuration import (
@@ -94,7 +94,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
     write_lock = threading.RLock()
-    live_tasks = LiveTaskQueue(settings.asterisk_cli, demo_mode=settings.demo_mode)
+    live_tasks = LiveTaskQueue(settings.asterisk_socket, demo_mode=settings.demo_mode)
 
     @app.before_request
     def protect_mutations_and_serialize_writes():
@@ -901,7 +901,7 @@ def _request_diagnostic(settings: Settings, command: str) -> str:
                "iax2 show peers", "rpt show nodes", "module show"}
     if command not in allowed:
         raise OperationError("Diagnostic command is not allowed.")
-    return AsteriskCLI(settings.asterisk_cli).run(command)
+    return AsteriskSocket(settings.asterisk_socket).run(command)
 
 
 def _demo_diagnostic(command: str) -> str:

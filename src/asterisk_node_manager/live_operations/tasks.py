@@ -36,9 +36,9 @@ class TaskRequest:
 
 
 class LiveTaskQueue:
-    def __init__(self, asterisk_cli: Path, demo_mode: bool = False,
+    def __init__(self, asterisk_socket: Path, demo_mode: bool = False,
                  clock: Callable[[], float] = time.monotonic):
-        self.asterisk_cli = asterisk_cli
+        self.asterisk_socket = asterisk_socket
         self.demo_mode = demo_mode
         self.clock = clock
         self._queue: queue.Queue[TaskRequest] = queue.Queue(maxsize=QUEUE_CAPACITY)
@@ -99,7 +99,7 @@ class LiveTaskQueue:
                 if self.demo_mode:
                     result = self._mock(task)
                 else:
-                    result = execute_operation(self.asterisk_cli, task.driver, task.operation,
+                    result = execute_operation(self.asterisk_socket, task.driver, task.operation,
                                                task.node_number, task.device, task.setting, task.value)
                 with self._lock:
                     record.update(status="succeeded", result=result,
