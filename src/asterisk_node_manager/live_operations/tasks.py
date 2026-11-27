@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Callable
 
 from .base import OperationError
-from .registry import DRIVERS, execute_operation
+from .registry import DRIVERS, execute_asterisk_query, execute_operation
+from .queries import QUERY_COMMANDS, query_demo_asterisk
 
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,8 @@ class LiveTaskQueue:
                 if self.demo_mode:
                     result = self._mock(task)
                     result["simulated"] = True
+                elif task.driver == "asterisk" and task.operation == "query":
+                    result = execute_asterisk_query(self.asterisk_socket, task.setting or "")
                 else:
                     result = execute_operation(self.asterisk_socket, task.driver, task.operation,
                                                task.node_number, task.device, task.setting, task.value)
@@ -151,6 +154,8 @@ class LiveTaskQueue:
                 self._queue.task_done()
 
     def _mock(self, task: TaskRequest) -> dict:
+        if task.driver == "asterisk" and task.operation == "query":
+            return {"output": query_demo_asterisk(task.setting or "")}
         if task.operation == "list_devices":
             if task.driver == "simpleusb":
                 return {"output": (
@@ -194,6 +199,13 @@ class LiveTaskQueue:
                 f"Tx Tone Level currently set to {values['txtone']}\n"
                 f"Current tx limiter setpoint: {values['txslimsp']}"
             )}
+        if task.operation == "read_signal":
+            if task.driver != "usbradio":
+                raise OperationError("read_signal is only supported by the USBRadio driver.")
+            return {"output": (
+                f"Current Signal Strength is {values['rxlevel']}\n"
+                f"Current Squelch setting is {values['rxsquelch']}"
+            )}
         setting = task.setting or ""
         fields = DRIVERS[task.driver].tuning_fields
         if setting not in fields:
@@ -220,6 +232,12 @@ class LiveTaskQueue:
             "txslimsp": f"Current tx limiter setpoint: {task.value}",
         }
         return {"output": outputs[setting]}
+
+    def submit_query(self, actor: str, query: str) -> dict:
+        """Queue a named read-only Asterisk query for the existing task pipeline."""
+        if query not in QUERY_COMMANDS:
+            raise OperationError("Choose a supported read-only Asterisk query.")
+        return self.submit(actor, "asterisk", "query", None, None, query, None)
 
     @staticmethod
     def _temporary_warning(driver: str, setting: str | None) -> str:

@@ -1,5 +1,5 @@
-"""Allowlisted live Asterisk operations for USB radio drivers."""
+"""Allowlisted live Asterisk operations and queries for radio drivers."""
 
-from .registry import execute_operation, operation_names
+from .registry import execute_asterisk_query, execute_operation, operation_names
 
-__all__ = ["execute_operation", "operation_names"]
+__all__ = ["execute_asterisk_query", "execute_operation", "operation_names"]

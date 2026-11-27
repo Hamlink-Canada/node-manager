@@ -35,6 +35,12 @@ class USBRadioOperations(LiveOperation):
         limiter = self.cli.run("radio tune txslimsp")
         return "\n".join(part for part in (settings, limiter) if part)
 
+    def read_signal(self, context: OperationContext) -> str:
+        """Read current RSSI and squelch threshold without changing either value."""
+        device = validate_device(context.device)
+        self._select_device(device)
+        return self.cli.run("radio tune rxsquelch")
+
     def set_value(self, context: OperationContext, setting: str, value: object) -> str:
         if setting not in self.tuning_fields:
             raise OperationError(f"Unsupported USBRadio tuning setting: {setting}.")
