@@ -74,6 +74,27 @@ def test_demo_mock_uses_channel_driver_output_format_and_simulated_values():
     assert "Rx Squelch currently set to 512" in tasks._mock(read)["output"]
 
 
+def test_demo_state_is_shared_by_nodes_using_the_same_runtime_device():
+    tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
+    tune = TaskRequest("a" * 32, "demo", "simpleusb", "set_value", 2000,
+                       "1001", "rx", 612)
+    read = TaskRequest("b" * 32, "demo", "simpleusb", "read_settings", 2001,
+                       "1001", None, None)
+
+    assert tasks._mock(tune)["output"] == "Changed setting on RX Channel to 612"
+    assert "Rx Level currently set to 612" in tasks._mock(read)["output"]
+
+
+def test_invalid_tuning_is_rejected_before_demo_task_submission():
+    tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
+    try:
+        tasks.submit("demo", "simpleusb", "set_value", 1000, "1000", "not_a_setting", "invalid")
+    except OperationError as error:
+        assert "Unsupported simpleusb tuning setting" in str(error)
+    else:
+        raise AssertionError("an invalid demo tuning request was accepted")
+
+
 def test_demo_device_listing_matches_channel_driver_format():
     tasks = LiveTaskQueue(Path("unused"), demo_mode=True)
     simpleusb = TaskRequest("a" * 32, "demo", "simpleusb", "list_devices", None,
@@ -96,6 +117,26 @@ def test_transmitting_usbradio_settings_require_explicit_confirmation():
         assert "confirm_transmit is required" in str(error)
     else:
         raise AssertionError("a transmit-capable tuning request was not gated")
+
+
+def test_rejected_device_selection_stops_before_read_or_tuning():
+    for driver, command, follow_up in (
+        (SimpleUSBOperations, "susb active usbB", "susb show settings"),
+        (USBRadioOperations, "radio active usbB", "radio show settings"),
+    ):
+        cli = RecordingCLI({command: "No device [usbB] exists"})
+        operation = driver(cli)
+        context = OperationContext(1000, "usbB")
+        for action in (lambda: operation.read_settings(context),
+                       lambda: operation.set_value(context, "rx" if driver is SimpleUSBOperations
+                                                    else "rxsquelch", 500)):
+            try:
+                action()
+            except OperationError as error:
+                assert "No device [usbB] exists" in str(error)
+            else:
+                raise AssertionError("a rejected device selection was allowed to continue")
+        assert cli.commands == [command, command]
 
 
 def test_demo_driver_reload_restores_only_that_drivers_initial_mock_values():
