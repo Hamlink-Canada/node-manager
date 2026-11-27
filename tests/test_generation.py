@@ -72,7 +72,11 @@ def test_generation_uses_explicit_network_lookup_and_stats_settings(database):
             )
             session.add(network)
             session.add(Node(node_number=4321, name="Network node", rxchannel="Local/pseudo"))
-            session.add(Setting(key="default_network_key", value="example.net"))
+            default_network = session.get(Setting, "default_network_key")
+            if default_network is None:
+                session.add(Setting(key="default_network_key", value="example.net"))
+            else:
+                default_network.value = "example.net"
         rendered = render_database(database)["rpt.conf"].decode()
     finally:
         sessions.kw["bind"].dispose()

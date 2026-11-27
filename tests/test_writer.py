@@ -23,9 +23,11 @@ def test_writer_rejects_invalid_json_and_unsupported_operations(tmp_path):
         "ok": False, "error": "unsupported operation"
     }
     deeply_nested_json = b"[" * 10_000 + b"0" + b"]" * 10_000
-    assert writer.handle_request(deeply_nested_json, settings) == {
-        "ok": False, "error": "invalid JSON request"
-    }
+    deeply_nested_response = writer.handle_request(deeply_nested_json, settings)
+    # Python releases differ in whether json.loads rejects this nesting as a
+    # recursion error or parses it and lets the protocol reject the list root.
+    assert deeply_nested_response["ok"] is False
+    assert deeply_nested_response["error"] in {"invalid JSON request", "unsupported operation"}
 
 
 def test_writer_response_reader_handles_large_replies_and_rejects_empty_reply():

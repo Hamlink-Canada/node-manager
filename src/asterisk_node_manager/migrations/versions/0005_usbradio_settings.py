@@ -44,7 +44,9 @@ def _sql_default(default):
 
 def _value(default, raw):
     if isinstance(default, bool):
-        return raw.strip().lower() in {"yes", "true", "1", "on"}
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() in {"yes", "true", "1", "on"}
     if isinstance(default, int):
         try:
             return int(raw)

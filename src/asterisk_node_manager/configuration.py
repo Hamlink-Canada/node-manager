@@ -143,7 +143,8 @@ def node_field_groups(node_number: int, settings: dict[str, str], locale: str = 
             by_name[group_id] = group
             groups.append(group)
         key = definition["key"]
-        form_key = f"{interface.lower()}_{key}" if interface else key
+        interface_prefix = {"SimpleUSB": "simpleusb", "Radio": "usbradio"}.get(interface)
+        form_key = f"{interface_prefix}_{key}" if interface_prefix else key
         value = str(settings.get(form_key, settings.get(key, definition["default"])))
         kind = definition["kind"]
         existing_number = None
