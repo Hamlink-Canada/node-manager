@@ -3,6 +3,7 @@ import json
 from io import BytesIO
 
 import pytest
+from sqlalchemy import func, select
 
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import (
@@ -11,7 +12,7 @@ from asterisk_node_manager.database import (
     sqlite_snapshot,
 )
 from asterisk_node_manager.migrate import upgrade_database
-from asterisk_node_manager.models import (ConfigValue, CustomLine, Network, Node, Setting,
+from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, Network, Node, Setting,
                                           USBRadioSettings)
 from asterisk_node_manager.web import create_app
 
@@ -99,6 +100,7 @@ def test_non_demo_routes_require_login_and_writers_file(tmp_path):
     client = app.test_client()
 
     assert client.get("/").status_code == 302
+    assert client.get("/changes").status_code == 302
     with client.session_transaction() as browser_session:
         browser_session["username"] = "reader"
     assert client.get("/").status_code == 200
@@ -285,6 +287,43 @@ def test_network_add_and_import_are_separate_pages(tmp_path):
     assert b'data-reset-default="field-iax_registration_port"' in add_page.data
     assert b'Stable key <span class="text-danger">(Required)</span>' in add_page.data
     assert client.get("/networks/import").status_code == 200
+
+
+def test_recent_changes_have_their_own_paginated_page(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    sessions = session_factory(settings.database)
+    with sessions.begin() as db:
+        latest = db.scalar(select(func.max(Change.revision))) or 0
+        db.add_all(Change(actor="tester", summary=f"Pagination change {number}",
+                          revision=latest + number, details={})
+                   for number in range(1, 46))
+
+    overview = client.get("/")
+    assert b'href="/changes"' in overview.data
+    assert b"Pagination change 45" not in overview.data
+    assert b"Recent changes</h2>" not in overview.data
+
+    first_page = client.get("/changes")
+    assert b"Pagination change 45" in first_page.data
+    assert b"Pagination change 26" in first_page.data
+    assert b"Pagination change 25" not in first_page.data
+    assert b'aria-label="Recent changes pages"' in first_page.data
+
+    second_page = client.get("/changes?page=2")
+    assert b"Pagination change 25" in second_page.data
+    assert b"Pagination change 6" in second_page.data
+    assert b"Pagination change 26" not in second_page.data
+    assert b'aria-current="page">2</a>' in second_page.data
+
+    last_page = client.get("/changes?page=999")
+    assert b"Pagination change 5" in last_page.data
+    assert b"Pagination change 1" in last_page.data
 
 
 def test_manual_network_form_previews_and_saves_explicit_service_fields(tmp_path):

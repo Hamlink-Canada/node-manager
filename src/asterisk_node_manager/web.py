@@ -219,7 +219,6 @@ def create_app(settings: Settings | None = None) -> Flask:
             node_network_names = {node.id: (node.network.name if node.network else "Default network")
                                   for node in nodes}
             values = {row.key: row.value for row in db.scalars(select(Setting))}
-            changes = db.scalars(select(Change).order_by(Change.revision.desc()).limit(20)).all()
         return render_template("index.html", node_count=node_count, networks=networks,
                                nodes=nodes, username=current_user(),
                                node_network_names=node_network_names,
@@ -229,8 +228,21 @@ def create_app(settings: Settings | None = None) -> Flask:
                                                 else settings.default_network),
                                advanced_networks=(settings.network_profiles_enabled
                                                   and values.get("advanced_node_networks") == "true"),
-                               network_profiles_enabled=settings.network_profiles_enabled,
-                               changes=changes)
+                               network_profiles_enabled=settings.network_profiles_enabled)
+
+    @app.get("/changes")
+    @login_required
+    def changes_page():
+        page_size = 20
+        requested_page = request.args.get("page", 1, type=int) or 1
+        with sessions() as db:
+            total = db.scalar(select(func.count(Change.id))) or 0
+            page_count = max(1, (total + page_size - 1) // page_size)
+            page = min(max(requested_page, 1), page_count)
+            changes = db.scalars(select(Change).order_by(Change.revision.desc())
+                                 .offset((page - 1) * page_size).limit(page_size)).all()
+        return render_template("changes.html", changes=changes, page=page,
+                               page_count=page_count, total=total)
 
     @app.get("/networks")
     @login_required
