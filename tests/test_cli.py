@@ -2,6 +2,8 @@ from asterisk_node_manager import cli
 from asterisk_node_manager.config import Settings
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.models import Node
+from asterisk_node_manager.migrate import upgrade_database
+import sqlite3
 
 
 def test_import_preview_does_not_create_database_or_change_files(tmp_path):
@@ -39,3 +41,21 @@ def test_import_commit_maps_known_fields_and_regenerates(monkeypatch, tmp_path):
             assert session.query(Node).count() == 1
     finally:
         sessions.kw["bind"].dispose()
+
+
+def test_restore_rejects_unrelated_sqlite_database_without_replacing_current(monkeypatch, tmp_path):
+    settings = Settings(database=tmp_path / "manager.sqlite3")
+    upgrade_database(settings.database)
+    sessions = session_factory(settings.database)
+    with sessions.begin() as session:
+        session.add(Node(node_number=1234, name="Existing node"))
+    unrelated = tmp_path / "unrelated.sqlite3"
+    with sqlite3.connect(unrelated) as connection:
+        connection.execute("CREATE TABLE unrelated (value TEXT)")
+    monkeypatch.setattr(cli, "load_settings", lambda _path=None: settings)
+    monkeypatch.setattr(cli, "_require_root", lambda: None)
+    monkeypatch.setattr("sys.argv", ["astnode", "restore", str(unrelated)])
+
+    assert cli.main() == 2
+    with sessions() as session:
+        assert session.query(Node).filter_by(node_number=1234).one().name == "Existing node"

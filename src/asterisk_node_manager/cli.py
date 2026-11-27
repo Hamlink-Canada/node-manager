@@ -14,7 +14,7 @@ from pathlib import Path
 from .config import load_settings
 from .database import database_write_lock, session_factory, sqlite_snapshot
 from .asterisk_config import is_secret_key, parse_config
-from .migrate import upgrade_database
+from .migrate import upgrade_database, validate_database_backup
 from .models import Change, ConfigValue, CustomLine, Network, Node, SimpleUSBSettings
 from .configuration import NODE_CONFIG_FIELDS, apply_node_config_values, node_fields_for_file
 
@@ -77,6 +77,9 @@ def main() -> int:
         _require_root()
         if not args.path.is_file():
             print(f"Backup file not found: {args.path}", file=sys.stderr)
+            return 2
+        if not validate_database_backup(args.path):
+            print(f"Not a valid Asterisk Node Manager backup: {args.path}", file=sys.stderr)
             return 2
         settings.database.parent.mkdir(parents=True, exist_ok=True)
         previous = sqlite_snapshot(settings.database) if settings.database.exists() else None

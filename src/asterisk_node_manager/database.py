@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 
 Base = declarative_base()
@@ -43,7 +43,7 @@ def create_database_engine(path: str | Path) -> Engine:
     if key in _file_engines:
         return _file_engines[key]
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    engine = create_engine(f"sqlite:///{db_path}", future=True, poolclass=NullPool)
     _enable_foreign_keys(engine)
     _file_engines[key] = engine
     return engine
