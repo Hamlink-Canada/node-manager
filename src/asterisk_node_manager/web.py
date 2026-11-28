@@ -95,7 +95,27 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
     write_lock = threading.RLock()
-    live_tasks = LiveTaskQueue(settings.asterisk_socket, demo_mode=settings.demo_mode)
+    def validate_live_task_binding(task):
+        if task.node_number is None:
+            return
+        with sessions() as db:
+            node = db.scalar(select(Node).where(Node.node_number == task.node_number))
+            if node is None:
+                raise OperationError(
+                    f"Node {task.node_number} was removed while the operation was queued; no CLI command was sent."
+                )
+            channel = node_config_values(node, _stored_defaults(db, "rpt.conf"))["rxchannel"]
+        prefix = "SimpleUSB/" if task.driver == "simpleusb" else "Radio/"
+        if channel != f"{prefix}{task.device}":
+            raise OperationError(
+                f"Node {task.node_number}'s configured {task.driver} device changed while the operation "
+                "was queued; no CLI command was sent. Submit the operation again."
+            )
+
+    live_tasks = LiveTaskQueue(
+        settings.asterisk_socket, demo_mode=settings.demo_mode,
+        binding_validator=validate_live_task_binding,
+    )
 
     @app.before_request
     def protect_mutations_and_serialize_writes():

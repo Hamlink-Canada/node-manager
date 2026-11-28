@@ -1,8 +1,8 @@
 from pathlib import Path
+import socket
 import time
 
-from asterisk_node_manager.live_operations.base import OperationContext
-from asterisk_node_manager.live_operations.base import OperationError
+from asterisk_node_manager.live_operations.base import AsteriskSocket, OperationContext, OperationError
 from asterisk_node_manager.live_operations.queries import (
     QUERY_COMMANDS,
     query_asterisk,
@@ -325,3 +325,84 @@ def test_asterisk_query_uses_the_existing_task_queue():
     assert result["status"] == "succeeded"
     assert result["result"]["simulated"] is True
     assert "System uptime:" in result["result"]["output"]
+
+
+def test_queued_tuning_rejects_a_changed_node_device_binding(monkeypatch):
+    import asterisk_node_manager.live_operations.tasks as task_module
+
+    sent = []
+    monkeypatch.setattr(task_module, "execute_operation", lambda *args: sent.append(args))
+
+    def stale_binding(_task):
+        raise OperationError("Node 1998's configured device changed while queued; no CLI command was sent.")
+
+    tasks = LiveTaskQueue(Path("unused"), binding_validator=stale_binding)
+    queued = tasks.submit("operator", "simpleusb", "set_value", 1998, "usbA", "rx", 600)
+
+    for _ in range(200):
+        result = tasks.get(queued["task_id"], "operator")
+        if result["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(0.005)
+
+    assert result["status"] == "failed"
+    assert "changed while queued" in result["error"]
+    assert sent == []
+
+
+def test_socket_timeout_after_dispatch_marks_task_outcome_unknown(monkeypatch):
+    import asterisk_node_manager.live_operations.base as base_module
+
+    class TimedOutSocket:
+        def __init__(self):
+            self.responses = [b"Asterisk ready\n"]
+            self.sent = []
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _path):
+            pass
+
+        def sendall(self, request):
+            self.sent.append(request)
+
+        def recv(self, _size):
+            if self.responses:
+                return self.responses.pop(0)
+            raise socket.timeout()
+
+        def close(self):
+            pass
+
+    fake_socket = TimedOutSocket()
+    monkeypatch.setattr(base_module.socket, "socket", lambda *_args, **_kwargs: fake_socket)
+
+    try:
+        AsteriskSocket(Path("unused")).run("susb tune rx 600")
+    except OperationError as error:
+        assert error.outcome_unknown is True
+        assert "read the current settings before retrying" in str(error)
+    else:
+        raise AssertionError("a missing post-dispatch response was reported as confirmed")
+    assert fake_socket.sent
+
+
+def test_task_reports_unknown_outcome_and_retains_reconciliation_warning(monkeypatch):
+    import asterisk_node_manager.live_operations.tasks as task_module
+
+    def unknown_outcome(*_args):
+        raise OperationError("response lost", outcome_unknown=True)
+
+    monkeypatch.setattr(task_module, "execute_operation", unknown_outcome)
+    tasks = LiveTaskQueue(Path("unused"))
+    queued = tasks.submit("operator", "simpleusb", "set_value", 1998, "usbA", "rx", 600)
+
+    for _ in range(200):
+        result = tasks.get(queued["task_id"], "operator")
+        if result["status"] in {"succeeded", "failed", "outcome_unknown"}:
+            break
+        time.sleep(0.005)
+
+    assert result["status"] == "outcome_unknown"
+    assert "may have changed live Asterisk state" in result["warning"]

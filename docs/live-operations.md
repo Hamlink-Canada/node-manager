@@ -19,8 +19,10 @@ require a configured `node_number`. The driver must match that node's
 `txvoice` and `txtone` requests must also include `"confirm_transmit": true`:
 those driver commands key the transmitter and send a 1 kHz test tone for about
 five seconds. The response is `202 Accepted` with a task ID. Poll
-`GET /api/live-operations/{task_id}` for `queued`, `running`, `succeeded`, or
-`failed` status. Only the writer who submitted the task can poll it. Queue-full
+`GET /api/live-operations/{task_id}` for `queued`, `running`, `succeeded`,
+`failed`, or `outcome_unknown` status. The last status means Asterisk received
+the command but the service could not confirm its result; read current settings
+before retrying. Only the writer who submitted the task can poll it. Queue-full
 requests return `503` with `Retry-After: 2`. Task records expire after one hour
 or when evicted from the 500-record LRU; they are lost on service restart.
 `reload_driver` reloads only the selected channel-driver module. The result

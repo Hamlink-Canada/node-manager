@@ -26,6 +26,10 @@ CLI_ERROR_PREFIX = re.compile(
 class OperationError(ValueError):
     """A safe, user-facing live operation failure."""
 
+    def __init__(self, message: str, *, outcome_unknown: bool = False):
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
+
 
 @dataclass(frozen=True)
 class OperationContext:
@@ -80,45 +84,70 @@ class AsteriskSocket:
             raise OperationError("Asterisk CLI command is too long for the control socket.")
 
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        command_sent = False
         try:
             self._set_timeout(client)
             client.connect(str(self.socket_path))
             self._read_greeting(client)
             self._set_timeout(client)
+            # Treat send errors as uncertain too: sendall may have written a
+            # prefix (or the complete command) before the socket failed.
+            command_sent = True
             client.sendall(request)
             output = self._read_response(client)
-        except OperationError:
+        except OperationError as exc:
+            if command_sent:
+                raise OperationError(
+                    f"{exc} Asterisk received the command, but its outcome could not be confirmed; "
+                    "read the current settings before retrying.",
+                    outcome_unknown=True,
+                ) from exc
             raise
         except socket.timeout as exc:
-            raise OperationError("Asterisk CLI operation exceeded the 10 second limit.") from exc
+            raise self._socket_failure(
+                "Asterisk CLI operation exceeded the 10 second limit.", command_sent
+            ) from exc
         except OSError as exc:
             if exc.errno in {errno.EACCES, errno.EPERM}:
-                raise OperationError(
+                message = (
                     "The web service cannot access the Asterisk control socket. "
                     "Grant its service account access to the configured socket, then restart the web service."
-                ) from exc
-            if exc.errno == errno.ENOENT:
-                raise OperationError(
+                )
+            elif exc.errno == errno.ENOENT:
+                message = (
                     "Asterisk control socket was not found. Set paths.asterisk_socket to the active "
                     "socket and restart the web service."
-                ) from exc
-            if exc.errno == errno.ECONNREFUSED:
-                raise OperationError(
+                )
+            elif exc.errno == errno.ECONNREFUSED:
+                message = (
                     "Asterisk control socket refused the connection. Check that Asterisk and its "
                     "socket listener are running, then retry."
-                ) from exc
-            raise OperationError(
-                f"Could not communicate with the Asterisk control socket (OS error {exc.errno})."
-            ) from exc
+                )
+            else:
+                message = f"Could not communicate with the Asterisk control socket (OS error {exc.errno})."
+            raise self._socket_failure(message, command_sent) from exc
         finally:
             client.close()
 
         message = output.decode("utf-8", errors="replace").strip()
         if not message:
-            raise OperationError("Asterisk returned an empty response. Confirm the operation is supported and retry.")
+            raise OperationError(
+                "Asterisk returned an empty response. The command may have taken effect; "
+                "read the current settings before retrying.",
+                outcome_unknown=True,
+            )
         if CLI_ERROR_PREFIX.match(message):
             raise OperationError(message)
         return message
+
+    @staticmethod
+    def _socket_failure(message: str, command_sent: bool) -> OperationError:
+        if command_sent:
+            message += (
+                " Asterisk received the command, but its outcome could not be confirmed; "
+                "read the current settings before retrying."
+            )
+        return OperationError(message, outcome_unknown=command_sent)
 
     def _set_timeout(self, client: socket.socket) -> None:
         remaining = self.deadline - time.monotonic()

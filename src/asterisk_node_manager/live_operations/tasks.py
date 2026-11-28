@@ -40,10 +40,12 @@ class TaskRequest:
 
 class LiveTaskQueue:
     def __init__(self, asterisk_socket: Path, demo_mode: bool = False,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 binding_validator: Callable[[TaskRequest], None] | None = None):
         self.asterisk_socket = asterisk_socket
         self.demo_mode = demo_mode
         self.clock = clock
+        self.binding_validator = binding_validator
         self._queue: queue.Queue[TaskRequest] = queue.Queue(maxsize=QUEUE_CAPACITY)
         self._tasks: OrderedDict[str, dict] = OrderedDict()
         self._lock = threading.RLock()
@@ -124,11 +126,15 @@ class LiveTaskQueue:
                 if self.demo_mode:
                     result = self._mock(task)
                     result["simulated"] = True
-                elif task.driver == "asterisk" and task.operation == "query":
-                    result = execute_asterisk_query(self.asterisk_socket, task.setting or "")
                 else:
-                    result = execute_operation(self.asterisk_socket, task.driver, task.operation,
-                                               task.node_number, task.device, task.setting, task.value)
+                    if task.operation in {"read_settings", "set_value"} \
+                            and self.binding_validator is not None:
+                        self.binding_validator(task)
+                    if task.driver == "asterisk" and task.operation == "query":
+                        result = execute_asterisk_query(self.asterisk_socket, task.setting or "")
+                    else:
+                        result = execute_operation(self.asterisk_socket, task.driver, task.operation,
+                                                   task.node_number, task.device, task.setting, task.value)
                 with self._lock:
                     record.update(status="succeeded", result=result,
                                   updated_at=datetime.now(timezone.utc).isoformat(),
@@ -150,13 +156,19 @@ class LiveTaskQueue:
                     self._trim()
                 self._audit("succeeded", record)
             except Exception as exc:
+                outcome_unknown = isinstance(exc, OperationError) and exc.outcome_unknown
                 with self._lock:
-                    record.update(status="failed", error=str(exc),
+                    record.update(status="outcome_unknown" if outcome_unknown else "failed", error=str(exc),
                                   updated_at=datetime.now(timezone.utc).isoformat(),
                                   _updated_monotonic=self.clock())
+                    if outcome_unknown:
+                        record["warning"] = (
+                            "The command may have changed live Asterisk state. Read the current settings "
+                            "before deciding whether to retry."
+                        )
                     self._tasks.move_to_end(task.task_id)
                     self._trim()
-                self._audit("failed", record, error=str(exc))
+                self._audit("outcome_unknown" if outcome_unknown else "failed", record, error=str(exc))
             finally:
                 self._queue.task_done()
 
@@ -277,18 +289,19 @@ class LiveTaskQueue:
         cutoff = self.clock() - TASK_TTL_SECONDS
         with self._lock:
             for task_id, record in list(self._tasks.items()):
-                if record["status"] in {"succeeded", "failed"} and record["_updated_monotonic"] < cutoff:
+                if record["status"] in {"succeeded", "failed", "outcome_unknown"} \
+                        and record["_updated_monotonic"] < cutoff:
                     del self._tasks[task_id]
 
     def _trim(self) -> None:
-        completed = sum(record["status"] in {"succeeded", "failed"}
+        completed = sum(record["status"] in {"succeeded", "failed", "outcome_unknown"}
                         for record in self._tasks.values())
         if completed <= TASK_CAPACITY:
             return
         for task_id, record in list(self._tasks.items()):
             if completed <= TASK_CAPACITY:
                 break
-            if record["status"] in {"succeeded", "failed"}:
+            if record["status"] in {"succeeded", "failed", "outcome_unknown"}:
                 del self._tasks[task_id]
                 completed -= 1
 
