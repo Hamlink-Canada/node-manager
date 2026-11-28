@@ -833,7 +833,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             if len(raw_payload) > 16_384:
                 return jsonify(error="Request body exceeds the 16 KiB limit."), 413
             payload = json.loads(raw_payload)
-        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             payload = None
         if not isinstance(payload, dict):
             return jsonify(error="A JSON object is required."), 400

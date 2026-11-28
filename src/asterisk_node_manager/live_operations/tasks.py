@@ -294,16 +294,15 @@ class LiveTaskQueue:
                     del self._tasks[task_id]
 
     def _trim(self) -> None:
-        completed = sum(record["status"] in {"succeeded", "failed", "outcome_unknown"}
-                        for record in self._tasks.values())
-        if completed <= TASK_CAPACITY:
+        excess = len(self._tasks) - TASK_CAPACITY
+        if excess <= 0:
             return
         for task_id, record in list(self._tasks.items()):
-            if completed <= TASK_CAPACITY:
+            if excess <= 0:
                 break
             if record["status"] in {"succeeded", "failed", "outcome_unknown"}:
                 del self._tasks[task_id]
-                completed -= 1
+                excess -= 1
 
     @staticmethod
     def _public(record: dict) -> dict:

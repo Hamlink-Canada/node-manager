@@ -54,9 +54,9 @@ class USBRadioOperations(LiveOperation):
             raise OperationError(f"{setting} must be an integer from {minimum} to {maximum}.")
         device = validate_device(context.device)
         self._select_device(device)
-        result = self.cli.run(f"radio tune {setting} {value}")
         if setting == "txslimsp":
             # This command changes the limiter without printing a success
-            # message, so read its value back for a useful task result.
-            result = self.cli.run("radio tune txslimsp")
-        return result
+            # message, so allow an empty write response and read its value back.
+            self.cli.run(f"radio tune txslimsp {value}", allow_empty_response=True)
+            return self.cli.run("radio tune txslimsp")
+        return self.cli.run(f"radio tune {setting} {value}")

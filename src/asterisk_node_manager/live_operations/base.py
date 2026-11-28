@@ -76,7 +76,7 @@ class AsteriskSocket:
         self.socket_path = socket_path
         self.deadline = time.monotonic() + COMMAND_TIMEOUT_SECONDS
 
-    def run(self, command: str) -> str:
+    def run(self, command: str, *, allow_empty_response: bool = False) -> str:
         if not command or any(character in command for character in "\0\r\n"):
             raise OperationError("Provide one non-empty Asterisk CLI command on a single line.")
         request = COMMAND_PREFIX + command.encode("utf-8") + b"\0"
@@ -131,6 +131,8 @@ class AsteriskSocket:
 
         message = output.decode("utf-8", errors="replace").strip()
         if not message:
+            if allow_empty_response:
+                return ""
             raise OperationError(
                 "Asterisk returned an empty response. The command may have taken effect; "
                 "read the current settings before retrying.",

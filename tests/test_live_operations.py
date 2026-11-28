@@ -17,9 +17,11 @@ class RecordingCLI:
     def __init__(self, responses=None):
         self.commands = []
         self.responses = responses or {}
+        self.options = []
 
-    def run(self, command):
+    def run(self, command, **options):
         self.commands.append(command)
+        self.options.append(options)
         return self.responses.get(command, "ok")
 
 
@@ -67,6 +69,24 @@ def test_usbradio_handlers_use_real_read_and_reload_commands():
         "radio tune txslimsp",
         "module reload chan_usbradio.so",
     ]
+    assert cli.options[5] == {"allow_empty_response": True}
+
+
+def test_empty_txslimsp_write_response_still_reads_back_value():
+    cli = RecordingCLI({
+        "radio active 1002": "Active (command) USB Radio device set to [1002]",
+        "radio tune txslimsp 9100": "",
+        "radio tune txslimsp": "Current tx limiter setpoint: 9100",
+    })
+    driver = USBRadioOperations(cli)
+
+    assert driver.set_value(OperationContext(1002, "1002"), "txslimsp", 9100) == (
+        "Current tx limiter setpoint: 9100"
+    )
+    assert cli.commands == [
+        "radio active 1002", "radio tune txslimsp 9100", "radio tune txslimsp"
+    ]
+    assert cli.options == [{}, {"allow_empty_response": True}, {}]
 
 
 def test_usbradio_signal_query_is_read_only_and_returns_driver_feedback():
@@ -388,6 +408,40 @@ def test_socket_timeout_after_dispatch_marks_task_outcome_unknown(monkeypatch):
     assert fake_socket.sent
 
 
+def test_socket_can_accept_empty_reply_only_when_explicitly_requested(monkeypatch):
+    import asterisk_node_manager.live_operations.base as base_module
+
+    class EmptyReplySocket:
+        def __init__(self):
+            self.responses = [b"Asterisk ready\n", b""]
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _path):
+            pass
+
+        def sendall(self, _request):
+            pass
+
+        def recv(self, _size):
+            return self.responses.pop(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(base_module.socket, "socket", lambda *_args, **_kwargs: EmptyReplySocket())
+    cli = AsteriskSocket(Path("unused"))
+
+    assert cli.run("radio tune txslimsp 9100", allow_empty_response=True) == ""
+    try:
+        cli.run("radio show settings")
+    except OperationError as error:
+        assert error.outcome_unknown is True
+    else:
+        raise AssertionError("an unapproved empty response was accepted")
+
+
 def test_task_reports_unknown_outcome_and_retains_reconciliation_warning(monkeypatch):
     import asterisk_node_manager.live_operations.tasks as task_module
 
@@ -406,3 +460,17 @@ def test_task_reports_unknown_outcome_and_retains_reconciliation_warning(monkeyp
 
     assert result["status"] == "outcome_unknown"
     assert "may have changed live Asterisk state" in result["warning"]
+
+
+def test_task_cache_trims_total_records_but_preserves_active_work():
+    tasks = LiveTaskQueue(Path("unused"))
+    for index in range(500):
+        tasks._tasks[f"completed-{index}"] = {"status": "succeeded"}
+    tasks._tasks["running"] = {"status": "running"}
+    tasks._tasks["queued"] = {"status": "queued"}
+
+    tasks._trim()
+
+    assert len(tasks._tasks) == 500
+    assert tasks._tasks["running"]["status"] == "running"
+    assert tasks._tasks["queued"]["status"] == "queued"

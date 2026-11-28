@@ -40,6 +40,22 @@ def test_demo_diagnostics_use_registered_rpt_localnodes_command():
     assert "No demonstration output" in _demo_diagnostic("rpt show nodes")
 
 
+def test_live_operation_rejects_json_integer_conversion_limit_as_bad_request(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    body = '{"driver":"simpleusb","operation":"read_settings","node_number":' \
+        + ("9" * 5000) + "}"
+    response = client.post("/api/live-operations", data=body, content_type="application/json")
+
+    assert response.status_code == 400
+    assert response.json["error"] == "A JSON object is required."
+
+
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):
     settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
                         demo_output_directory=tmp_path / "generated", writer_socket=tmp_path / "absent.sock")
