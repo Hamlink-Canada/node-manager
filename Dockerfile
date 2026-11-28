@@ -25,7 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libpam0g util-linux \
     && rm -rf /var/lib/apt/lists/* \
-    && (getent group asterisk >/dev/null || groupadd --gid "$ASTNODE_ASTERISK_GID" asterisk) \
+    && (getent group asterisk >/dev/null || groupadd --non-unique --gid "$ASTNODE_ASTERISK_GID" asterisk) \
     && groupmod --non-unique --gid "$ASTNODE_ASTERISK_GID" asterisk \
     && groupadd --system asterisk-node-manager \
     && useradd --system --gid asterisk-node-manager --groups asterisk-node-manager,asterisk \

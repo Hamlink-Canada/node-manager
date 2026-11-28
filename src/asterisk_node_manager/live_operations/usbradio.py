@@ -58,5 +58,11 @@ class USBRadioOperations(LiveOperation):
             # This command changes the limiter without printing a success
             # message, so allow an empty write response and read its value back.
             self.cli.run(f"radio tune txslimsp {value}", allow_empty_response=True)
-            return self.cli.run("radio tune txslimsp")
+            try:
+                return self.cli.run("radio tune txslimsp")
+            except OperationError as exc:
+                raise OperationError(
+                    f"The txslimsp write may have taken effect, but its readback failed: {exc}",
+                    outcome_unknown=True,
+                ) from exc
         return self.cli.run(f"radio tune {setting} {value}")

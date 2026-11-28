@@ -89,6 +89,34 @@ def test_empty_txslimsp_write_response_still_reads_back_value():
     assert cli.options == [{}, {"allow_empty_response": True}, {}]
 
 
+def test_txslimsp_readback_failure_preserves_uncertain_write_outcome():
+    class ReadbackFailureCLI(RecordingCLI):
+        def run(self, command, **options):
+            self.commands.append(command)
+            self.options.append(options)
+            if command == "radio tune txslimsp":
+                raise OperationError("Asterisk connection failed before readback dispatch.")
+            return self.responses.get(command, "ok")
+
+    cli = ReadbackFailureCLI({
+        "radio active 1002": "Active (command) USB Radio device set to [1002]",
+        "radio tune txslimsp 9100": "",
+    })
+    driver = USBRadioOperations(cli)
+
+    try:
+        driver.set_value(OperationContext(1002, "1002"), "txslimsp", 9100)
+    except OperationError as error:
+        assert error.outcome_unknown is True
+        assert "readback failed" in str(error)
+    else:
+        raise AssertionError("a failed readback lost the uncertain write outcome")
+
+    assert cli.commands == [
+        "radio active 1002", "radio tune txslimsp 9100", "radio tune txslimsp"
+    ]
+
+
 def test_usbradio_signal_query_is_read_only_and_returns_driver_feedback():
     cli = RecordingCLI({
         "radio active 1002": "Active (command) USB Radio device set to [1002]",
