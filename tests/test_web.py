@@ -14,7 +14,7 @@ from asterisk_node_manager.database import (
 from asterisk_node_manager.migrate import upgrade_database
 from asterisk_node_manager.models import (Change, ConfigValue, CustomLine, CustomValue, Network,
                                           Node, Setting, SimpleUSBSettings, USBRadioSettings)
-from asterisk_node_manager.web import create_app
+from asterisk_node_manager.web import _demo_diagnostic, create_app
 
 
 def _dispose(sessions, database):
@@ -33,6 +33,27 @@ def _network_profile(key, name, **overrides):
     }
     profile.update(overrides)
     return profile
+
+
+def test_demo_diagnostics_use_registered_rpt_localnodes_command():
+    assert "Node 1000" in _demo_diagnostic("rpt localnodes")
+    assert "No demonstration output" in _demo_diagnostic("rpt show nodes")
+
+
+def test_live_operation_rejects_json_integer_conversion_limit_as_bad_request(tmp_path):
+    settings = Settings(database=f":memory:{tmp_path.name}", demo_mode=True,
+                        demo_output_directory=tmp_path / "generated")
+    app = create_app(settings)
+    app.config.update(TESTING=True)
+    client = app.test_client()
+    client.post("/login")
+
+    body = '{"driver":"simpleusb","operation":"read_settings","node_number":' \
+        + ("9" * 5000) + "}"
+    response = client.post("/api/live-operations", data=body, content_type="application/json")
+
+    assert response.status_code == 400
+    assert response.json["error"] == "A JSON object is required."
 
 
 def test_demo_mode_login_and_node_configuration_work_without_writer_socket(tmp_path):
@@ -197,7 +218,8 @@ def test_guided_node_setup_commits_typed_settings_and_regenerates_once(tmp_path)
         with sessions() as session:
             radio_node = session.query(Node).filter_by(node_number=2347).one()
             assert radio_node.usbradio_settings is not None
-            assert session.query(USBRadioSettings).count() == 1
+            assert session.query(USBRadioSettings).join(Node).filter(
+                Node.node_number == 2347).count() == 1
         generated_radio = (settings.demo_output_directory / "usbradio.conf").read_text()
         assert "[2347]" in generated_radio
         assert "rxdemod = flat" in generated_radio

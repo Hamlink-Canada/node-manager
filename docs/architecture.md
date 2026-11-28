@@ -32,17 +32,29 @@ contains the complete configuration and does not depend on Asterisk's
 `custom/` include directory. This includes `echolink.conf`.
 
 The web service runs as the asterisk-node-manager system user. It cannot
-write Asterisk configuration files. It connects to the root-owned,
-systemd-activated Unix socket for three limited operations:
+write Asterisk configuration files. The root helper handles PAM authentication
+and publishes the fixed generated files, preserving existing ownership and
+mode and rolling back replacements if a write fails. Asterisk reload is not
+requested automatically.
 
-- Authenticate a username through the configured host PAM service.
-- Render the current database and replace the fixed generated files.
-- Run one of the fixed read-only Asterisk diagnostics.
+The web service runs fixed read-only diagnostics and allowlisted
+SimpleUSB/USBRadio live tuning operations against the configured Asterisk
+instance. It resolves device names from a configured Node Number and serializes
+operations through one bounded worker queue because driver commands use shared
+active-device selection. The root helper does not execute Asterisk CLI commands.
 
-The helper does not accept arbitrary command lines or file paths. It stages
-all generated files, preserves existing ownership and mode, and rolls back
-replacements if a write fails. New files use mode 0640 and the asterisk
-group when present. Asterisk reload is not requested.
+Live tuning task results are held in a bounded in-memory LRU with a one-hour
+TTL and are polled by task ID by the submitting writer. A service restart
+clears these results. Audit events include the actor, Node Number, operation,
+driver and outcome in service logs; deployment logging must retain and rotate
+those logs. Demo mode returns mock operation results and never connects to
+Asterisk. Live tuning changes are temporary; save the desired values
+through the web app to persist them. An explicit API request can reload the
+selected USB channel driver after configuration publication; configuration
+generation does not request a reload automatically. A driver reload reapplies
+saved configuration and can replace unsaved live changes.
+USBRadio `txslimsp` has no matching web configuration field, so its live value
+cannot be persisted through the web app.
 The writer reconciles the database to the generated files when it starts, and
 the web service requests a fresh generation before it begins listening. This
 repairs an interrupted file publication or a process restart from the current

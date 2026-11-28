@@ -4,7 +4,6 @@ asterisk_directory = "/etc/asterisk"
 writer_socket = "/run/asterisk-node-manager/writer.sock"
 writer_allowlist = "/etc/asterisk-node-manager/writers"
 network_profiles_directory = "/etc/asterisk-node-manager/networks"
-asterisk_cli = "/usr/sbin/asterisk"
 demo_output_directory = "/tmp/asterisk-node-manager-demo"
 
 [web]

@@ -13,12 +13,14 @@ import threading
 import hashlib
 import sqlite3
 import signal
+import queue
 from collections import Counter
 from urllib.parse import urlsplit
 from functools import wraps
 from pathlib import Path
 
 from flask import Flask, abort, redirect, render_template, request, send_file, session, url_for
+from flask import jsonify
 from flask_bootstrap import Bootstrap5
 from sqlalchemy import func, select
 from waitress import serve
@@ -39,6 +41,10 @@ from .demo import DEMO_USERNAME, initialize_demo
 from .networks import (NETWORK_DEFAULTS, NETWORK_FIELD_DEFINITIONS, load_network_profiles,
                        network_fields, network_overrides, parse_network_profile)
 from . import __version__
+from .live_operations.base import AsteriskSocket, OperationError
+from .live_operations.queries import QUERY_COMMANDS, query_demo_asterisk
+from .live_operations.registry import operation_names
+from .live_operations.tasks import LiveTaskQueue
 from .configuration import (
     NODE_CONFIG_FIELDS,
     apply_interface_config_values,
@@ -89,10 +95,32 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.jinja_env.globals["_"] = lambda key: translate(request_locale(), key)
     sessions = session_factory(settings.database)
     write_lock = threading.RLock()
+    def validate_live_task_binding(task):
+        if task.node_number is None:
+            return
+        with sessions() as db:
+            node = db.scalar(select(Node).where(Node.node_number == task.node_number))
+            if node is None:
+                raise OperationError(
+                    f"Node {task.node_number} was removed while the operation was queued; no CLI command was sent."
+                )
+            channel = node_config_values(node, _stored_defaults(db, "rpt.conf"))["rxchannel"]
+        prefix = "SimpleUSB/" if task.driver == "simpleusb" else "Radio/"
+        if channel != f"{prefix}{task.device}":
+            raise OperationError(
+                f"Node {task.node_number}'s configured {task.driver} device changed while the operation "
+                "was queued; no CLI command was sent. Submit the operation again."
+            )
+
+    live_tasks = LiveTaskQueue(
+        settings.asterisk_socket, demo_mode=settings.demo_mode,
+        binding_validator=validate_live_task_binding,
+    )
 
     @app.before_request
     def protect_mutations_and_serialize_writes():
         is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        is_live_task_request = request.path == "/api/live-operations"
         if is_mutation:
             origin = request.headers.get("Origin")
             referer = request.headers.get("Referer")
@@ -103,13 +131,13 @@ def create_app(settings: Settings | None = None) -> Flask:
                 parsed = urlsplit(source)
                 if parsed.netloc != request.host or parsed.scheme != request.scheme:
                     abort(400, "Cross-origin requests are not allowed")
-        if is_mutation or is_memory_database(settings.database):
+        if (is_mutation and not is_live_task_request) or is_memory_database(settings.database):
             write_lock.acquire()
             request.environ["node_manager_write_lock"] = True
-            if is_mutation and current_user() in writers():
+            if is_mutation and not is_live_task_request and current_user() in writers():
                 request.environ["node_manager_database_lock"] = acquire_database_write_lock(
                     settings.database)
-            if is_mutation and current_user() in writers():
+            if is_mutation and not is_live_task_request and current_user() in writers():
                 existed = is_memory_database(settings.database) or Path(settings.database).is_file()
                 request.environ["node_manager_prewrite_database"] = (
                     _sqlite_snapshot(settings.database) if existed else None, existed)
@@ -659,8 +687,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.route("/diagnostics", methods=["GET", "POST"])
     @login_required
     def diagnostics():
-        choices = ("core show version", "core show uptime", "core show channels",
-                   "iax2 show peers", "rpt show nodes", "module show")
+        choices = tuple(QUERY_COMMANDS.values())
         output = None
         selected = None
         error = None
@@ -670,7 +697,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 abort(400, "Choose a supported diagnostic")
             try:
                 output = _request_diagnostic(settings, selected)
-            except OSError as exc:
+            except (OSError, OperationError) as exc:
                 error = str(exc)
         return render_template("diagnostics.html", choices=choices, output=output,
                                selected=selected, error=error, app_version=__version__)
@@ -789,6 +816,85 @@ def create_app(settings: Settings | None = None) -> Flask:
     def health():
         return {"status": "ok"}
 
+    @app.get("/api/live-operations")
+    @write_required
+    def live_operation_catalog():
+        return {"drivers": operation_names(),
+                "operations": ["list_devices", "read_settings", "set_value", "reload_driver"],
+                "transmit_confirmation_required": {"usbradio": ["txvoice", "txtone"]}}
+
+    @app.post("/api/live-operations")
+    @write_required
+    def submit_live_operation():
+        if request.content_length is not None and request.content_length > 16_384:
+            return jsonify(error="Request body exceeds the 16 KiB limit."), 413
+        try:
+            raw_payload = request.stream.read(16_385)
+            if len(raw_payload) > 16_384:
+                return jsonify(error="Request body exceeds the 16 KiB limit."), 413
+            payload = json.loads(raw_payload)
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            payload = None
+        if not isinstance(payload, dict):
+            return jsonify(error="A JSON object is required."), 400
+        allowed = {"driver", "operation", "node_number", "setting", "value", "confirm_transmit"}
+        if set(payload) - allowed:
+            return jsonify(error="Unknown request fields are not allowed."), 400
+        driver = payload.get("driver")
+        operation = payload.get("operation")
+        if not isinstance(driver, str) or driver not in {"simpleusb", "usbradio"}:
+            return jsonify(error="driver must be 'simpleusb' or 'usbradio'."), 400
+        if not isinstance(operation, str) or operation not in {
+                "list_devices", "read_settings", "set_value", "reload_driver"}:
+            return jsonify(error="operation must be list_devices, read_settings, set_value, or reload_driver."), 400
+        node_number = payload.get("node_number")
+        device = None
+        if node_number is not None and (isinstance(node_number, bool)
+                                        or not isinstance(node_number, int)
+                                        or not 1000 <= node_number <= 2**63 - 1):
+            return jsonify(error="node_number must be an integer from 1000 to 2^63 - 1."), 400
+        if operation not in {"list_devices", "reload_driver"}:
+            if node_number is None:
+                return jsonify(error="node_number must be an integer from 1000 to 2^63 - 1."), 400
+            with sessions() as db:
+                node = db.scalar(select(Node).where(Node.node_number == node_number))
+                if node is None:
+                    return jsonify(error="Node Number is not configured."), 404
+                channel = node_config_values(node, _stored_defaults(db, "rpt.conf"))["rxchannel"]
+            prefix = "SimpleUSB/" if driver == "simpleusb" else "Radio/"
+            if not channel.startswith(prefix):
+                return jsonify(error=f"Node {node_number} is not configured for {driver}."), 400
+            device = channel[len(prefix):]
+        if operation == "set_value":
+            if not isinstance(payload.get("setting"), str) or "value" not in payload:
+                return jsonify(error="set_value requires setting and value."), 400
+            confirm_transmit = payload.get("confirm_transmit", False)
+            if not isinstance(confirm_transmit, bool):
+                return jsonify(error="confirm_transmit must be a boolean."), 400
+            if driver == "usbradio" and payload["setting"] in {"txvoice", "txtone"} \
+                    and confirm_transmit is not True:
+                return jsonify(error=("confirm_transmit must be true because this USBRadio "
+                                      "operation keys the transmitter.")), 400
+        elif payload.get("confirm_transmit", False) is not False:
+            return jsonify(error="confirm_transmit is only accepted for set_value."), 400
+        try:
+            task = live_tasks.submit(current_user() or "", driver, operation, node_number,
+                                     device, payload.get("setting"), payload.get("value"),
+                                     payload.get("confirm_transmit", False))
+        except queue.Full as exc:
+            return jsonify(error=str(exc)), 503, {"Retry-After": "2"}
+        return jsonify(task), 202
+
+    @app.get("/api/live-operations/<task_id>")
+    @write_required
+    def poll_live_operation(task_id: str):
+        if not re.fullmatch(r"[0-9a-f]{32}", task_id):
+            return jsonify(error="Task was not found."), 404
+        task = live_tasks.get(task_id, current_user() or "")
+        if task is None:
+            return jsonify(error="Task was not found."), 404
+        return jsonify(task)
+
     return app
 
 
@@ -822,29 +928,19 @@ def _request_authentication(settings: Settings, username: str, password: str) ->
 
 
 def _request_diagnostic(settings: Settings, command: str) -> str:
+    query = next((name for name, registered in QUERY_COMMANDS.items() if registered == command), None)
+    if query is None:
+        raise OperationError("Diagnostic command is not allowed.")
     if settings.demo_mode:
-        return _demo_diagnostic(command)
-    request_data = json.dumps({"operation": "diagnostic", "command": command}).encode("utf-8")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(15)
-        client.connect(str(settings.writer_socket))
-        client.sendall(request_data + b"\n")
-        response = _read_writer_response(client)
-    if not response.get("ok"):
-        raise OSError(response.get("error", "Asterisk diagnostic failed"))
-    return str(response.get("output", ""))
+        return query_demo_asterisk(query)
+    return AsteriskSocket(settings.asterisk_socket).run(command)
 
 
 def _demo_diagnostic(command: str) -> str:
-    examples = {
-        "core show version": "Asterisk 20.7.0-demo built for demonstration\n",
-        "core show uptime": "System uptime: 2 hours, 14 minutes\nLast reload: 18 minutes ago\n",
-        "core show channels": "Channel              Location             State   Application\n0 active channels\n",
-        "iax2 show peers": "Name/Username    Host             State\nDemoPeer         192.0.2.25       OK\n",
-        "rpt show nodes": "Node 1000: Demo Node North\nNode 1001: Demo Node South\n",
-        "module show": "Module                         Description\napp_rpt.so                     Radio Repeater\n",
-    }
-    return examples.get(command, "No demonstration output for this command.\n")
+    query = next((name for name, registered in QUERY_COMMANDS.items() if registered == command), None)
+    if query is None:
+        return "No demonstration output for this command.\n"
+    return query_demo_asterisk(query)
 
 
 def _write_demo_files(directory: Path, files: dict[str, bytes]) -> None:

@@ -17,6 +17,12 @@ configuration. It is not the registration identity term **Node ID**.
 
 _Avoid_: network-specific node number.
 
+### Live tuning
+
+A temporary change to an Asterisk USB radio driver's runtime tuning values.
+Live tuning is not saved to the configuration database and is lost when
+Asterisk reloads; save the desired value in the web app to make it persistent.
+
 ### Network Profile
 
 A named set of network-specific settings used to generate node configuration.

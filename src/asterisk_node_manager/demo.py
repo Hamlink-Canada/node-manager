@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from .database import is_memory_database, session_factory
 from .migrate import upgrade_database
-from .models import Change, CustomValue, Node, Setting, SimpleUSBSettings
+from .models import Change, CustomValue, Node, Setting, SimpleUSBSettings, USBRadioSettings
 
 DEMO_USERNAME = "demo"
 
@@ -30,6 +30,8 @@ def initialize_demo(database) -> None:
                      rxchannel="SimpleUSB/1000", simpleusb_settings=SimpleUSBSettings()),
                 Node(node_number=1001, name="Demo Node South", duplex=0,
                      rxchannel="SimpleUSB/1001", simpleusb_settings=SimpleUSBSettings()),
+                Node(node_number=1002, name="Demo Node Radio", duplex=0,
+                     rxchannel="Radio/1002", usbradio_settings=USBRadioSettings()),
                 CustomValue(file_name="extensions.conf", section="demo", key="exten",
                             value="s,1,Answer()", secret=False),
                 Change(actor=DEMO_USERNAME, summary="Loaded demonstration data", revision=1,

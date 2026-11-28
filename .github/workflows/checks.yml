@@ -48,6 +48,8 @@ jobs:
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build and smoke-test both image architectures
+        env:
+          ASTERISK_GID: "1000"
         run: |
           docker compose -f compose.yaml config -q
           for platform in linux/amd64 linux/arm64; do

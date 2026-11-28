@@ -1,6 +1,5 @@
 import json
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -75,16 +74,10 @@ def test_demo_file_publication_rolls_back_when_a_later_replace_fails(monkeypatch
     assert (directory / "two.conf").read_bytes() == b"old-two"
 
 
-def test_writer_limits_diagnostic_commands(monkeypatch, tmp_path):
-    settings = SimpleNamespace(pam_service="manager", database=tmp_path / "db.sqlite",
-                               asterisk_directory=tmp_path / "asterisk", asterisk_cli=Path("/usr/sbin/asterisk"))
-    response = writer.handle_request(_request({"operation": "diagnostic", "command": "rm -rf /"}), settings)
-    assert response == {"ok": False, "error": "diagnostic command is not allowed"}
-
-    monkeypatch.setattr(writer.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
-        returncode=0, stdout="version output", stderr=""))
-    response = writer.handle_request(_request({"operation": "diagnostic", "command": "core show version"}), settings)
-    assert response == {"ok": True, "output": "version output"}
+def test_writer_rejects_removed_diagnostic_operation():
+    response = writer.handle_request(_request({"operation": "diagnostic", "command": "core show version"}),
+                                     SimpleNamespace())
+    assert response == {"ok": False, "error": "unsupported operation"}
 
 
 def test_writer_rejects_invalid_authentication_payload_without_pam_call(monkeypatch, tmp_path):

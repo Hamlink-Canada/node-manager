@@ -66,6 +66,7 @@ their custom overrides so a future rule editor can restore the packaged rule.
 
 See docs/architecture.md for the local writer, PAM, migration, backup, and
 import workflows.
+See docs/live-operations.md for the live SimpleUSB and USBRadio operations API.
 
 The project is still net new and has no supported prior database version. Its
 Alembic history is intentionally a single initial migration that creates the
@@ -82,10 +83,10 @@ units are under debian/ and packaging/systemd/.
 
 The standard Compose file starts the web service and the privileged writer
 helper as separate containers. It binds the web port to localhost and writes
-generated files to `./asterisk-config` by default. The writer uses the mounted
-configuration directory's group ID for new files. Set `ASTERISK_GID` in the
-environment to the host Asterisk group's numeric ID when the directory group
-does not match it. Start it with:
+generated files to `./asterisk-config` by default. Set `ASTERISK_GID` in the
+environment to the numeric group ID used for Asterisk live-control access;
+Compose requires this value for the web service. The writer also uses it for
+new configuration files when the directory's group ID matches. Start it with:
 
     docker compose up --build
 
