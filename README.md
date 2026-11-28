@@ -96,12 +96,17 @@ units are under debian/ and packaging/systemd/.
 The standard Compose file starts the web service and the privileged writer
 helper as separate containers. It binds the web port to localhost and writes
 generated files to `./asterisk-config` by default. Set `ASTERISK_GID` in the
-environment to the numeric group ID used for Asterisk live-control access;
-Compose requires this value for the web service. The writer also uses it for
-new configuration files when the directory's group ID matches. Start it with:
+environment to the numeric group ID used for Asterisk live-control access. It
+defaults to `1000` for image builds and should match the host group ID; the
+writer uses it for new configuration files when the directory's group ID
+matches. Build the images without runtime secrets with:
+
+    docker compose build
+
+Before starting the services, configure the encryption key:
 
     export ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-    docker compose up --build
+    docker compose up
 
 Both services receive the same key. Keep it outside the repository and
 available for future restarts and database restores.
