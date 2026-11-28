@@ -16,3 +16,9 @@ demo_mode = false
 [networks]
 profiles_enabled = false
 default_network = "allstarlink"
+
+[security]
+# Required in normal mode. Generate with:
+# python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# Keep this value secret and out of source control.
+# encryption_key = "replace-with-a-generated-fernet-key"

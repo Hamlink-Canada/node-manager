@@ -32,6 +32,15 @@ environment variables. Nested variables use double underscores, for example
 ASTNODE_PATHS__DATABASE and ASTNODE_WEB__PORT. Set ASTNODE_CONFIG to
 select an explicit TOML file; if that file does not exist, startup fails.
 
+Normal mode requires an authenticated-encryption key in Dynaconf. Generate a
+Fernet key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`,
+then set it as `security.encryption_key` in a protected TOML file or provide
+`ASTNODE_SECURITY__ENCRYPTION_KEY`. Do not commit the key or place it in an
+unprotected configuration file. Demo mode uses an ephemeral key with its
+in-memory database. Debian installation creates a key in
+`/etc/asterisk-node-manager/config.toml` on first install and restricts that
+file to root and the application group.
+
 The web service binds to 127.0.0.1:8765 by default. Web access uses the host
 PAM service. PAM users can read configuration; write access is controlled by
 the root-managed writer allowlist. Manage that allowlist with the root-only
@@ -72,7 +81,10 @@ The project is still net new and has no supported prior database version. Its
 Alembic history is intentionally a single initial migration that creates the
 current schema from scratch. Earlier development migrations were consolidated
 and removed; the initial migration is not intended to upgrade databases made
-with those interim schemas.
+with those interim schemas. Application-managed values in `config_values`,
+`custom_values`, and `custom_lines` are stored as authenticated ciphertext and
+decrypted by the application when needed. Existing plaintext development
+databases are not migrated; initialize a fresh database after upgrading.
 
 ## Packaging
 
@@ -88,7 +100,11 @@ environment to the numeric group ID used for Asterisk live-control access;
 Compose requires this value for the web service. The writer also uses it for
 new configuration files when the directory's group ID matches. Start it with:
 
+    export ENCRYPTION_KEY="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     docker compose up --build
+
+Both services receive the same key. Keep it outside the repository and
+available for future restarts and database restores.
 
 The Compose writer does not mount the host password database. PAM can
 authenticate only accounts available inside the writer container; host

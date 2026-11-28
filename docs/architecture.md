@@ -76,12 +76,23 @@ to render the database again. astnode backup PATH copies the SQLite database
 to the supplied path. sudo astnode restore PATH restores it and regenerates
 files. The web interface provides the same backup and restore operations.
 
+The normal application requires `security.encryption_key` from Dynaconf (or
+`ASTNODE_SECURITY__ENCRYPTION_KEY`). It must be a URL-safe base64 Fernet key.
+The ORM encrypts application-managed configuration text before storing it in
+SQLite and decrypts it after reading. Missing or incorrect keys stop access to
+those values. The isolated demo uses an ephemeral key and in-memory database.
+
 Restore validates the SQLite database before replacing the active database.
 Generated files are rendered after restore; if rendering fails, the database
 copy is rolled back. A database transaction and multiple filesystem updates
 cannot be one atomic transaction. The web request restores the previous
 database when generation fails, and service startup reconciles files from the
 database. Run sudo astnode generate to request reconciliation manually.
+
+Database backups contain encrypted values but do not contain the encryption
+key. Administrators must protect the database, backups, host, and Dynaconf key,
+and retain the key needed by each backup. Key rotation and conversion of
+existing plaintext development databases are not supported in this release.
 
 ## Configuration import
 

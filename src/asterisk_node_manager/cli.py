@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 from .config import load_settings
+from .encryption import require_encryption_key
 from .database import database_write_lock, session_factory, sqlite_snapshot
 from .asterisk_config import (expand_asterisk_inheritance, is_asterisk_include,
                               is_secret_key, parse_config)
@@ -49,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     settings = load_settings(args.config)
+    require_encryption_key(settings.encryption_key)
     if settings.demo_mode:
         print("The in-memory demo database is available only through the web app.", file=sys.stderr)
         return 2

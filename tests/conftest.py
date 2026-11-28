@@ -9,9 +9,16 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
 import pytest
+from cryptography.fernet import Fernet
 
+from asterisk_node_manager.encryption import configure_encryption_key
 from asterisk_node_manager.database import session_factory
 from asterisk_node_manager.migrate import upgrade_database
+
+
+# The app's production entry points require an operator-supplied key. Tests use
+# a process-local key so fixtures can exercise the ORM without deployment config.
+configure_encryption_key(Fernet.generate_key())
 
 
 @pytest.fixture

@@ -10,6 +10,7 @@ services:
     command: ["astnode-web"]
     environment:
       ASTNODE_WEB__DEMO_MODE: "false"
+      ASTNODE_SECURITY__ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to a generated Fernet key}
       ASTNODE_ASTERISK_GID: "${ASTERISK_GID:?Set ASTERISK_GID to the Asterisk live-control group ID}"
       ASTNODE_NETWORKS__PROFILES_ENABLED: ${NETWORK_PROFILES_ENABLED:-false}
       ASTNODE_NETWORKS__DEFAULT_NETWORK: ${DEFAULT_NETWORK:-allstarlink}
@@ -44,6 +45,7 @@ services:
       ASTNODE_PATHS__DATABASE: /var/lib/asterisk-node-manager/manager.sqlite3
       ASTNODE_PATHS__WRITER_SOCKET: /run/asterisk-node-manager/writer.sock
       ASTNODE_PATHS__ASTERISK_DIRECTORY: /etc/asterisk
+      ASTNODE_SECURITY__ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY to a generated Fernet key}
       ASTNODE_NETWORKS__PROFILES_ENABLED: ${NETWORK_PROFILES_ENABLED:-false}
       ASTNODE_NETWORKS__DEFAULT_NETWORK: ${DEFAULT_NETWORK:-allstarlink}
       ASTNODE_ASTERISK_GID: ${ASTERISK_GID:-}

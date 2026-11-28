@@ -10,6 +10,25 @@ case "$1" in
     install -d -o asterisk-node-manager -g asterisk-node-manager -m 0750 /var/lib/asterisk-node-manager
     install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager
     install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager/networks
+    python3 - <<'PY'
+from pathlib import Path
+import re
+from cryptography.fernet import Fernet
+
+config = Path("/etc/asterisk-node-manager/config.toml")
+text = config.read_text(encoding="utf-8")
+security = re.search(r"(?ms)^\[security\]\s*$([\s\S]*?)(?=^\[|\Z)", text)
+if security and re.search(r"(?m)^\s*encryption_key\s*=", security.group(1)):
+    raise SystemExit(0)
+key_line = f'encryption_key = "{Fernet.generate_key().decode("ascii")}"\n'
+if security:
+    text = text[:security.end(1)] + key_line + text[security.end(1):]
+else:
+    text += "\n[security]\n" + key_line
+config.write_text(text, encoding="utf-8")
+PY
+    chown root:asterisk-node-manager /etc/asterisk-node-manager/config.toml
+    chmod 0640 /etc/asterisk-node-manager/config.toml
     if [ ! -e /etc/asterisk-node-manager/secret-key ]; then
       umask 077
       python3 -c 'import secrets; print(secrets.token_urlsafe(48))' > /etc/asterisk-node-manager/secret-key

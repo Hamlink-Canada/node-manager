@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dynaconf import Dynaconf
 from dynaconf.loaders import env_loader
+from cryptography.fernet import Fernet
 
 DEFAULTS = {
     "paths": {
@@ -30,6 +31,9 @@ DEFAULTS = {
         "profiles_enabled": False,
         "default_network": "allstarlink",
     },
+    "security": {
+        "encryption_key": None,
+    },
 }
 
 @dataclass(frozen=True)
@@ -50,6 +54,7 @@ class Settings:
     demo_output_directory: Path = Path(DEFAULTS["paths"]["demo_output_directory"])
     network_profiles_enabled: bool = DEFAULTS["networks"]["profiles_enabled"]
     default_network: str = DEFAULTS["networks"]["default_network"]
+    encryption_key: str | None = None
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
@@ -90,6 +95,14 @@ def load_settings(path: str | Path | None = None) -> Settings:
     else:
         database = _path(settings.PATHS.DATABASE, "paths.database")
 
+    encryption_key = settings.SECURITY.ENCRYPTION_KEY
+    if encryption_key is not None and not isinstance(encryption_key, (str, bytes)):
+        raise TypeError("security.encryption_key must be a Fernet key string")
+    if demo_mode and not encryption_key:
+        # Demo data is process-local, so an ephemeral key is sufficient and
+        # keeps the demonstration isolated from any configured production key.
+        encryption_key = Fernet.generate_key().decode("ascii")
+
     port_value = settings.WEB.PORT
     if isinstance(port_value, bool) or not isinstance(port_value, (int, str)):
         raise TypeError("web.port must be an integer from 1 to 65535")
@@ -117,6 +130,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
                                      "paths.demo_output_directory"),
         network_profiles_enabled=network_profiles_enabled,
         default_network=default_network,
+        encryption_key=encryption_key,
     )
 
 

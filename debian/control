@@ -2,13 +2,13 @@ Source: asterisk-node-manager
 Section: comm
 Priority: optional
 Maintainer: Asterisk Node Manager contributors <maintainers@example.invalid>
-Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-alembic, python3-flask, python3-flask-bootstrap, python3-hatchling, python3-jinja2, python3-pampy, python3-sqlalchemy, python3-waitress, pybuild-plugin-pyproject
+Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-alembic, python3-cryptography, python3-flask, python3-flask-bootstrap, python3-hatchling, python3-jinja2, python3-pampy, python3-sqlalchemy, python3-waitress, pybuild-plugin-pyproject
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
 
 Package: asterisk-node-manager
 Architecture: all
-Depends: ${python3:Depends}, ${misc:Depends}, adduser, python3-alembic, python3-flask, python3-flask-bootstrap, python3-jinja2, python3-pampy, python3-sqlalchemy, python3-waitress
+Depends: ${python3:Depends}, ${misc:Depends}, adduser, python3-alembic, python3-cryptography, python3-flask, python3-flask-bootstrap, python3-jinja2, python3-pampy, python3-sqlalchemy, python3-waitress
 Description: Local configuration manager for Asterisk nodes
  A Flask web manager and command-line utility backed by SQLite. Generated
  Asterisk configuration is written from bundled templates.

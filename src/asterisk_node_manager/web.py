@@ -26,6 +26,8 @@ from sqlalchemy import func, select
 from waitress import serve
 
 from .config import Settings, load_settings
+from .encryption import (configure_encryption_key, has_encryption_key,
+                         require_encryption_key, validate_database_encryption)
 from .database import (acquire_database_write_lock, database_exists, database_write_lock,
                        dispose_database_engine,
                        is_memory_database, release_database_write_lock, restore_sqlite_snapshot,
@@ -70,11 +72,19 @@ def _handle_shutdown(signum, _frame):
 
 def create_app(settings: Settings | None = None) -> Flask:
     settings = settings or load_settings()
+    if settings.encryption_key:
+        require_encryption_key(settings.encryption_key)
+    elif settings.demo_mode and not has_encryption_key():
+        from cryptography.fernet import Fernet
+        configure_encryption_key(Fernet.generate_key())
+    else:
+        require_encryption_key()
     if settings.demo_mode:
         if not is_memory_database(settings.database):
             raise ValueError("Demo mode requires an in-memory database")
         initialize_demo(settings.database)
     if database_exists(settings.database):
+        validate_database_encryption(settings.database)
         with database_write_lock(settings.database):
             loaded_profiles = load_network_profiles(
                 settings.network_profiles_directory, settings.database)
