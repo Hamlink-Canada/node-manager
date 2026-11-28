@@ -50,6 +50,7 @@ jobs:
       - name: Build and smoke-test both image architectures
         env:
           ASTERISK_GID: "1000"
+          ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         run: |
           docker compose -f compose.yaml config -q
           for platform in linux/amd64 linux/arm64; do
