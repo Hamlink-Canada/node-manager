@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from .database import Base
+from .encryption import EncryptedText
 
 
 class Setting(Base):
@@ -157,8 +158,8 @@ class ConfigValue(Base):
     file_name = Column(String(200), nullable=False)
     section = Column(String(200), nullable=False, default="")
     key = Column(String(200), nullable=False)
-    default_value = Column(Text, nullable=False, default="")
-    updated_value = Column(Text, nullable=True)
+    default_value = Column(EncryptedText, nullable=False, default="")
+    updated_value = Column(EncryptedText, nullable=True)
     secret = Column(Boolean, nullable=False, default=False)
 
     @property
@@ -179,7 +180,7 @@ class CustomValue(Base):
     file_name = Column(String(200), nullable=False)
     section = Column(String(200), nullable=False, default="")
     key = Column(String(200), nullable=False)
-    value = Column(Text, nullable=False)
+    value = Column(EncryptedText, nullable=False)
     secret = Column(Boolean, nullable=False, default=False)
 
 
@@ -189,7 +190,7 @@ class CustomLine(Base):
     file_name = Column(String(200), nullable=False)
     section = Column(String(200), nullable=False, default="")
     line_number = Column(Integer, nullable=False)
-    content = Column(Text, nullable=False)
+    content = Column(EncryptedText, nullable=False)
     is_default = Column(Boolean, nullable=False, default=False)
     is_deleted = Column(Boolean, nullable=False, default=False)
 

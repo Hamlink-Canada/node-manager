@@ -10,6 +10,48 @@ case "$1" in
     install -d -o asterisk-node-manager -g asterisk-node-manager -m 0750 /var/lib/asterisk-node-manager
     install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager
     install -d -o root -g asterisk-node-manager -m 0750 /etc/asterisk-node-manager/networks
+    python3 - <<'PY'
+from pathlib import Path
+import grp
+import os
+import re
+import tempfile
+import tomllib
+from cryptography.fernet import Fernet
+
+config = Path("/etc/asterisk-node-manager/config.toml")
+text = config.read_text(encoding="utf-8")
+settings = tomllib.loads(text)
+if "encryption_key" in settings.get("security", {}):
+    raise SystemExit(0)
+key_line = f'encryption_key = "{Fernet.generate_key().decode("ascii")}"\n'
+security = re.search(
+    r"(?m)^[ \t]*\[[ \t]*security[ \t]*\][ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)",
+    text,
+)
+if security:
+    next_table = re.search(r"(?m)^[ \t]*\[", text[security.end():])
+    insert_at = security.end() + next_table.start() if next_table else len(text)
+    prefix = text[:insert_at]
+    if prefix and not prefix.endswith(("\n", "\r")):
+        prefix += "\n"
+    text = prefix + key_line + text[insert_at:]
+else:
+    if text and not text.endswith("\n\n"):
+        text += "\n" if text.endswith("\n") else "\n\n"
+    text += "[security]\n" + key_line
+
+with tempfile.NamedTemporaryFile(
+    mode="w", encoding="utf-8", dir=config.parent, prefix=".config.toml.", delete=False
+) as staged_file:
+    staged_file.write(text)
+    staged_config = Path(staged_file.name)
+os.chown(staged_config, 0, grp.getgrnam("asterisk-node-manager").gr_gid)
+staged_config.chmod(0o640)
+os.replace(staged_config, config)
+PY
+    chown root:asterisk-node-manager /etc/asterisk-node-manager/config.toml
+    chmod 0640 /etc/asterisk-node-manager/config.toml
     if [ ! -e /etc/asterisk-node-manager/secret-key ]; then
       umask 077
       python3 -c 'import secrets; print(secrets.token_urlsafe(48))' > /etc/asterisk-node-manager/secret-key

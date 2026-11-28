@@ -3,6 +3,8 @@
 This is intentionally the only migration. The project is net new, so prior
 migration history was consolidated and removed; this creates the current schema
 from scratch and is not an upgrade path for previously deployed databases.
+Configuration text columns use TEXT storage for versioned authenticated
+ciphertext; encryption and decryption are handled by the application ORM.
 """
 
 from alembic import op
